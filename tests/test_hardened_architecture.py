@@ -223,8 +223,8 @@ class HardenedInstallerTests(unittest.TestCase):
                 configure_allowlist.validate_entry(value)
 
     def test_plist_separates_code_and_runtime_roots(self) -> None:
-        template = (REPO_ROOT / "com.user.cowork-imessage.plist.template").read_text()
-        self.assertIn("{{CODE_ROOT}}/bin/cowork-imessage-helper", template)
+        template = (REPO_ROOT / "com.jeffhuber.grokbot-imessage.plist.template").read_text()
+        self.assertIn("{{CODE_ROOT}}/bin/grokbot-imessage-helper", template)
         self.assertIn("{{BRIDGE_ROOT}}/control/requests", template)
         self.assertNotIn("{{INSTALL_ROOT}}", template)
 

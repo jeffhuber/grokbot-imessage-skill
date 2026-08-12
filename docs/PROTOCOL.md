@@ -14,7 +14,7 @@ fields; a future major-version mismatch must fail closed with upgrade guidance.
   AI Host (agent context)              macOS (your local machine)
   -----------------------              -------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->
-  Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
+  Reads  response-<id>.json  <-- grokbot-imessage-helper (wrapper)   -->
                                  helper.py (FDA-granted, reads
                                  chat.db + AddressBook, drives osascript)
 ```
@@ -36,8 +36,8 @@ remaining directories under the user-owned bridge root:
 ```
 <code-root>/
 └── bin/
-    ├── cowork-imessage-helper       # Compiled C wrapper (FDA target)
-    ├── confirm-imessage-send        # Native, fail-safe send confirmation
+    ├── grokbot-imessage-helper       # Compiled C wrapper (FDA target)
+    ├── grokbot-imessage-confirm        # Native, fail-safe send confirmation
     ├── helper.py                     # Python worker
     └── send_gate.py                  # Send nonce validation
 
@@ -571,12 +571,12 @@ System Settings → Privacy & Security → Full Disk Access
 
 ### Automation → Messages
 
-Required to send. First send triggers a one-time prompt: *"cowork-imessage-helper wants to control Messages."* Click **OK**.
+Required to send. First send triggers a one-time prompt: *"grokbot-imessage-helper wants to control Messages."* Click **OK**.
 
 **Grant location:**
-```
+```text
 System Settings → Privacy & Security → Automation
-→ cowork-imessage-helper → Messages (toggle on)
+→ grokbot-imessage-helper → Messages (toggle on)
 ```
 
 ---
@@ -615,7 +615,7 @@ System Settings → Privacy & Security → Automation
 | `contacts/blocked_chats.txt` | User-maintained blocklist of sensitive chats. |
 | `contacts/read_policy.txt` | Standard-mode read policy selector. Hardened mode overrides it. |
 | `contacts/allowed_chats.txt` | Standard-mode optional allowlist. |
-| `<code-root>/bin/cowork-imessage-helper` | Locally signed C wrapper (the FDA target). |
+| `<code-root>/bin/grokbot-imessage-helper` | Locally signed C wrapper (the FDA target). |
 | `<code-root>/bin/helper.py` | Python worker (reads chat.db, resolves contacts, redacts, drives osascript). |
 | `<code-root>/bin/send_gate.py` | Nonce minting and validation for send-preview/send gate. |
 | `nonces/` | Short-lived per-nonce files bound to previewed sends. TTL-reaped on every helper run. |

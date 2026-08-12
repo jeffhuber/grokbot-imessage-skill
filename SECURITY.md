@@ -81,12 +81,18 @@ payloads are capped at 64 KiB.
 The LaunchAgent sends process stdout/stderr to `/dev/null`, leaving structured
 helper diagnostics to the same descriptor-relative internal logger.
 
+The Grok installation has its own LaunchAgent, plist, executable names, bridge,
+and hardened code root. The sibling Claude Cowork helper can therefore run at
+the same time without sharing request queues, policy files, responses, logs, or
+nonces. Both helpers still rely on the same macOS Messages database and
+Messages Automation surface.
+
 ### Automation → Messages (v0.3.0+)
 
 Required to send. The first send triggers a one-time macOS prompt:
-"cowork-imessage-helper wants to control Messages." The grant lives
+"grokbot-imessage-helper wants to control Messages." The grant lives
 under System Settings → Privacy & Security → Automation →
-cowork-imessage-helper → Messages.
+grokbot-imessage-helper → Messages.
 
 Concretely, this grants the helper the ability to:
 
@@ -280,8 +286,10 @@ You can verify what's actually on your disk:
   archives include a `SHA256SUMS` file, and the source is small enough to diff
   against a local clone.
 - After install, verify the LaunchAgent plist under
-  `~/Library/LaunchAgents/com.user.cowork-imessage.plist` points only
-  at the wrapper in the bridge folder and carries no other arguments.
+  `~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` points only
+  at the selected wrapper: the bridge-folder binary in standard mode or the
+  root-owned code-root binary in hardened mode. It must carry no other
+  arguments.
 
 ## Revoking
 
@@ -291,9 +299,9 @@ To fully remove the helper's access:
 2. Delete the bridge folder: `rm -rf ~/imessage-bridge` (or wherever
    you installed it).
 3. System Settings → Privacy & Security → Full Disk Access → remove
-   `cowork-imessage-helper`.
+   `grokbot-imessage-helper`.
 4. System Settings → Privacy & Security → Automation →
-   cowork-imessage-helper → turn Messages off (or remove the entry
+   grokbot-imessage-helper → turn Messages off (or remove the entry
    entirely).
 
 ## Reporting a vulnerability

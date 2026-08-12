@@ -29,7 +29,7 @@ Use when the user asks to:
   Grok Bot (your context)             macOS (user's local machine)
   -----------------------             ---------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->
-  Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
+  Reads  response-<id>.json  <-- grokbot-imessage-helper (wrapper)   -->
                                  helper.py (FDA-granted, reads
                                  chat.db + AddressBook, drives osascript)
 ```
@@ -47,7 +47,7 @@ The helper must be installed on the user's Mac before you can use this skill. **
 1. Clone or download this repository.
 2. Run the recommended `install-hardened.sh` or the standard `install.sh`.
 3. Grant **Full Disk Access** to the exact wrapper path printed by the installer.
-4. (For sending) Approve the Automation prompt on first send: *"cowork-imessage-helper wants to control Messages."*
+4. (For sending) Approve the Automation prompt on first send: *"grokbot-imessage-helper wants to control Messages."*
 
 If the user hasn't installed the helper yet, **direct them to the installation section** in `README.md`, or walk them through it step-by-step. Do not proceed with iMessage actions until the helper is installed and FDA is granted.
 

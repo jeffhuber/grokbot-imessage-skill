@@ -10,7 +10,8 @@
 #   5. Ad-hoc code-signs the wrapper so macOS can give FDA a stable identity
 #      to attach to. Re-signing on content-identical rebuilds keeps the grant.
 #   6. Fills in the launchd plist template and installs it under
-#      ~/Library/LaunchAgents/com.user.cowork-imessage.plist, then bootstraps it.
+#      ~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist, then
+#      bootstraps it.
 #   7. Optionally installs SKILL.md under Grok's user-level skill directory.
 #   8. Prints exact next-steps: grant Full Disk Access to the wrapper binary.
 #
@@ -33,12 +34,16 @@ CONTACTS_DIR="$INSTALL_ROOT/contacts"
 HELPER_PY="$BIN_DIR/helper.py"
 SEND_GATE_PY="$BIN_DIR/send_gate.py"
 WRAPPER_SRC="$BIN_DIR/cowork_imessage_helper.c"
-WRAPPER_BIN="$BIN_DIR/cowork-imessage-helper"
+WRAPPER_BIN="$BIN_DIR/grokbot-imessage-helper"
 CONFIRM_SRC="$BIN_DIR/confirm_imessage_send.m"
-CONFIRM_BIN="$BIN_DIR/confirm-imessage-send"
-PLIST_TEMPLATE="$INSTALL_ROOT/com.user.cowork-imessage.plist.template"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.user.cowork-imessage.plist"
-LAUNCHCTL_LABEL="com.user.cowork-imessage"
+CONFIRM_BIN="$BIN_DIR/grokbot-imessage-confirm"
+PLIST_TEMPLATE="$INSTALL_ROOT/com.jeffhuber.grokbot-imessage.plist.template"
+PLIST_DEST="$HOME/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist"
+LAUNCHCTL_LABEL="com.jeffhuber.grokbot-imessage"
+LEGACY_LABEL="com.user.cowork-imessage"
+LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
+LEGACY_WRAPPER="$BIN_DIR/cowork-imessage-helper"
+LEGACY_MIGRATOR="$INSTALL_ROOT/tools/migrate_legacy_launchagent.py"
 INSTALL_GROK_SKILL="${INSTALL_GROK_SKILL:-1}"
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
@@ -93,6 +98,10 @@ if [[ ! -f "$CONFIRM_SRC" ]]; then
 fi
 if [[ ! -f "$PLIST_TEMPLATE" ]]; then
     red "Missing $PLIST_TEMPLATE"
+    exit 1
+fi
+if [[ ! -f "$LEGACY_MIGRATOR" ]]; then
+    red "Missing $LEGACY_MIGRATOR"
     exit 1
 fi
 if [[ "$INSTALL_GROK_SKILL" == "1" && \
@@ -171,6 +180,8 @@ clang -Wall -Wextra -Werror -O2 \
     -DSEND_GATE_SCRIPT="\"$SEND_GATE_PY\"" \
     -DCONFIRM_HELPER="\"$CONFIRM_BIN\"" \
     -DBRIDGE_ROOT="\"$INSTALL_ROOT\"" \
+    -DHELPER_DISPLAY_NAME='"grokbot-imessage-helper"' \
+    -DHOST_DISPLAY_NAME='"Grok Bot"' \
     -DPYTHON_INTERPRETER="\"$PYTHON3_PATH\"" \
     -o "$WRAPPER_BIN" "$WRAPPER_SRC"
 chmod 700 "$WRAPPER_BIN"
@@ -219,6 +230,25 @@ PYGEN
 chmod 644 "$PLIST_DEST"
 green "  wrote $PLIST_DEST"
 
+# Claim the legacy identity only when it points to this exact prior Grok
+# installation. A Claude installation using the old shared label is left alone.
+if [[ -e "$LEGACY_PLIST" || -L "$LEGACY_PLIST" ]]; then
+    if python3 "$LEGACY_MIGRATOR" \
+        --plist "$LEGACY_PLIST" \
+        --program "$LEGACY_WRAPPER" \
+        --watch "$INSTALL_ROOT/control/requests"; then
+        if launchctl print "gui/$UID/$LEGACY_LABEL" >/dev/null 2>&1; then
+            launchctl bootout "gui/$UID/$LEGACY_LABEL"
+        fi
+        rm -f "$LEGACY_PLIST"
+        green "  migrated this Grok install from legacy label $LEGACY_LABEL"
+    else
+        yellow "  retained legacy $LEGACY_LABEL because it belongs to another install"
+    fi
+elif launchctl print "gui/$UID/$LEGACY_LABEL" >/dev/null 2>&1; then
+    yellow "  legacy $LEGACY_LABEL is loaded without a verifiable plist; left untouched"
+fi
+
 # Bootstrap (or restart) the agent.
 if launchctl print "gui/$UID/$LAUNCHCTL_LABEL" >/dev/null 2>&1; then
     launchctl bootout "gui/$UID/$LAUNCHCTL_LABEL"
@@ -245,14 +275,14 @@ echo "  2. Click the + button, then press Cmd-Shift-G and paste:"
 echo
 echo "       $WRAPPER_BIN"
 echo
-echo "  3. Select 'cowork-imessage-helper' and make sure its toggle is ON."
+echo "  3. Select 'grokbot-imessage-helper' and make sure its toggle is ON."
 echo "  4. (If prompted to quit and reopen anything, just click 'Later'.)"
 echo
 echo "Verify by asking Grok Bot: \"review my imessages over the last 2 days\""
 echo
 yellow "Note on sending (v0.3.0+):"
 echo "  The first time you ask Grok Bot to send an iMessage, macOS will"
-echo "  prompt 'cowork-imessage-helper wants to control Messages.' Click OK."
+echo "  prompt 'grokbot-imessage-helper wants to control Messages.' Click OK."
 echo "  After that, the grant lives under:"
 echo "    System Settings -> Privacy & Security -> Automation"
 echo "  (This is a separate permission from Full Disk Access.)"

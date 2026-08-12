@@ -78,7 +78,7 @@ it to a dedicated folder first:
 mkdir ~/imessage-bridge
 cp -r bin/ tools/ contacts/ SKILL.md install.sh install-hardened.sh \
   install-skill.sh uninstall.sh uninstall-hardened.sh \
-  com.user.cowork-imessage.plist.template ~/imessage-bridge/
+  com.jeffhuber.grokbot-imessage.plist.template ~/imessage-bridge/
 cd ~/imessage-bridge && ./install.sh
 ```
 
@@ -94,6 +94,11 @@ Both installers:
 - Create `control/requests/`, `control/responses/`, and `contacts/` directories
 - Install the skill under `${GROK_HOME:-~/.grok}/skills/imessage-grok-bot/`
 - Verify discovery with `grok inspect` when the Grok CLI is available
+
+The helper uses the host-specific LaunchAgent
+`com.jeffhuber.grokbot-imessage`, so it can run beside the sibling Claude
+Cowork helper. Each host must use its own bridge, policies, logs, responses,
+and nonces; do not point both hosts at one queue.
 
 That path is Grok Build's documented user-level skill directory. If your Grok
 host already loads `SKILL.md` through a workflow bridge, install only the local
@@ -112,16 +117,16 @@ for the currently supported discovery paths.
 Open **System Settings → Privacy & Security → Full Disk Access**, click the `+` button, press **Cmd-Shift-G**, and paste the path printed by the installer:
 
 Use the exact wrapper path printed by your installer. For hardened installs it is
-`/Library/Application Support/GrokBotIMessage/users/<uid>/libexec/bin/cowork-imessage-helper`;
-for standard installs it is `<bridge>/bin/cowork-imessage-helper`.
+`/Library/Application Support/GrokBotIMessage/users/<uid>/libexec/bin/grokbot-imessage-helper`;
+for standard installs it is `<bridge>/bin/grokbot-imessage-helper`.
 
 Select it, make sure the toggle is **ON**.
 
 ### 4. (Optional) Grant Automation permission for sending
 
-The first time you ask Grok Bot to send a message, macOS will prompt: *"cowork-imessage-helper wants to control Messages."* Click **OK**.
+The first time you ask Grok Bot to send a message, macOS will prompt: *"grokbot-imessage-helper wants to control Messages."* Click **OK**.
 
-You can verify the grant later under **System Settings → Privacy & Security → Automation → cowork-imessage-helper → Messages**.
+You can verify the grant later under **System Settings → Privacy & Security → Automation → grokbot-imessage-helper → Messages**.
 
 ### 5. Tell Grok Bot where your bridge folder is
 
@@ -217,10 +222,10 @@ See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
   Grok Bot (your context)             macOS (your local machine)
   -----------------------             -------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->
-  Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
+  Reads  response-<id>.json  <-- grokbot-imessage-helper (wrapper)   -->
                                  root-owned helper.py in hardened mode
                                  (FDA-granted, reads chat.db)
-                                 confirm-imessage-send (native approval UI)
+                                 grokbot-imessage-confirm (native approval UI)
 ```
 
 Grok Bot runs in an environment that can execute shell commands on your Mac. The
@@ -340,8 +345,8 @@ standard install. Both preserve runtime data until you deliberately delete it.
 
 This removes the launchd agent. To fully remove:
 - Delete the bridge folder.
-- Open **System Settings → Privacy & Security → Full Disk Access** and revoke `cowork-imessage-helper`.
-- (Optional) Open **System Settings → Privacy & Security → Automation** and toggle off or remove `cowork-imessage-helper → Messages`.
+- Open **System Settings → Privacy & Security → Full Disk Access** and revoke `grokbot-imessage-helper`.
+- (Optional) Open **System Settings → Privacy & Security → Automation** and toggle off or remove `grokbot-imessage-helper → Messages`.
 
 The uninstaller also removes the user-level `imessage-grok-bot` skill installed under Grok's discovery directory.
 
@@ -358,6 +363,15 @@ python3 tools/doctor.py --bridge "$PWD"
 
 For hardened installs, use the full command printed by `install-hardened.sh`,
 including `--code-root`.
+
+### Migration from the legacy shared LaunchAgent
+
+Older releases used `com.user.cowork-imessage`, the same identity as the
+original Claude Cowork helper. During upgrade, the installer removes that
+legacy agent only when its plist points to the exact Grok code and bridge paths
+being upgraded. A legacy agent belonging to Claude or an unknown installation
+is left untouched. The new wrapper name may require granting Full Disk Access
+and Automation once more; follow the exact paths printed by the installer.
 
 Tagged releases include `SHA256SUMS`; verify an archive with
 `shasum -a 256 -c SHA256SUMS` before installation.

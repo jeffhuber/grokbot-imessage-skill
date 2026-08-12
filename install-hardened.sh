@@ -21,9 +21,13 @@ USER_ROOT="$PRODUCT_ROOT/users/$UID"
 CODE_ROOT="$USER_ROOT/libexec"
 CONFIG_ROOT="$USER_ROOT/config"
 BRIDGE_ROOT="${GROKBOT_IMESSAGE_BRIDGE:-$HOME/Library/Application Support/GrokBotIMessage}"
-PLIST_TEMPLATE="$SOURCE_ROOT/com.user.cowork-imessage.plist.template"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.user.cowork-imessage.plist"
-LABEL="com.user.cowork-imessage"
+PLIST_TEMPLATE="$SOURCE_ROOT/com.jeffhuber.grokbot-imessage.plist.template"
+PLIST_DEST="$HOME/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist"
+LABEL="com.jeffhuber.grokbot-imessage"
+LEGACY_LABEL="com.user.cowork-imessage"
+LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
+LEGACY_WRAPPER="$CODE_ROOT/bin/cowork-imessage-helper"
+LEGACY_MIGRATOR="$SOURCE_ROOT/tools/migrate_legacy_launchagent.py"
 ALLOWLIST="$CONFIG_ROOT/allowed_chats.txt"
 CURRENT_USER="$(id -un)"
 BUILD_DIR="$(mktemp -d -t grokbot-imessage-build.XXXXXX)"
@@ -51,6 +55,7 @@ for path in \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" \
     "$SOURCE_ROOT/tools/doctor.py" \
     "$SOURCE_ROOT/tools/configure_allowlist.py" \
+    "$LEGACY_MIGRATOR" \
     "$SOURCE_ROOT/contacts/blocked_chats.txt.template" \
     "$SOURCE_ROOT/contacts/allowed_chats.txt.template" \
     "$SOURCE_ROOT/install-skill.sh" \
@@ -116,19 +121,21 @@ fi
 
 clang -Wall -Wextra -Werror -fobjc-arc \
     -framework AppKit -framework Foundation \
-    -o "$BUILD_DIR/confirm-imessage-send" "$SOURCE_ROOT/bin/confirm_imessage_send.m"
+    -o "$BUILD_DIR/grokbot-imessage-confirm" "$SOURCE_ROOT/bin/confirm_imessage_send.m"
 
 clang -Wall -Wextra -Werror -O2 \
     -DHELPER_SCRIPT="\"$CODE_ROOT/bin/helper.py\"" \
     -DSEND_GATE_SCRIPT="\"$CODE_ROOT/bin/send_gate.py\"" \
-    -DCONFIRM_HELPER="\"$CODE_ROOT/bin/confirm-imessage-send\"" \
+    -DCONFIRM_HELPER="\"$CODE_ROOT/bin/grokbot-imessage-confirm\"" \
     -DBRIDGE_ROOT="\"$BRIDGE_ROOT\"" \
     -DPYTHON_INTERPRETER="\"$PYTHON3_PATH\"" \
     -DEXPECTED_CODE_UID=0 \
     -DREAD_POLICY_MODE='"allowlist"' \
     -DREAD_ALLOWLIST_PATH="\"$ALLOWLIST\"" \
     -DREQUIRE_ROOT_POLICY=1 \
-    -o "$BUILD_DIR/cowork-imessage-helper" \
+    -DHELPER_DISPLAY_NAME='"grokbot-imessage-helper"' \
+    -DHOST_DISPLAY_NAME='"Grok Bot"' \
+    -o "$BUILD_DIR/grokbot-imessage-helper" \
     "$SOURCE_ROOT/bin/cowork_imessage_helper.c"
 
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
@@ -136,8 +143,8 @@ SIGN_ARGS=(--force --sign "$CODESIGN_IDENTITY" --options runtime)
 if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
     SIGN_ARGS+=(--timestamp)
 fi
-codesign "${SIGN_ARGS[@]}" "$BUILD_DIR/cowork-imessage-helper"
-codesign "${SIGN_ARGS[@]}" "$BUILD_DIR/confirm-imessage-send"
+codesign "${SIGN_ARGS[@]}" "$BUILD_DIR/grokbot-imessage-helper"
+codesign "${SIGN_ARGS[@]}" "$BUILD_DIR/grokbot-imessage-confirm"
 
 sudo /usr/bin/install -o root -g wheel -m 444 \
     "$SOURCE_ROOT/bin/helper.py" "$CODE_ROOT/bin/helper.py"
@@ -148,9 +155,9 @@ sudo /usr/bin/install -o root -g wheel -m 444 \
 sudo /usr/bin/install -o root -g wheel -m 444 \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" "$CODE_ROOT/bin/confirm_imessage_send.m"
 sudo /usr/bin/install -o root -g wheel -m 555 \
-    "$BUILD_DIR/cowork-imessage-helper" "$CODE_ROOT/bin/cowork-imessage-helper"
+    "$BUILD_DIR/grokbot-imessage-helper" "$CODE_ROOT/bin/grokbot-imessage-helper"
 sudo /usr/bin/install -o root -g wheel -m 555 \
-    "$BUILD_DIR/confirm-imessage-send" "$CODE_ROOT/bin/confirm-imessage-send"
+    "$BUILD_DIR/grokbot-imessage-confirm" "$CODE_ROOT/bin/grokbot-imessage-confirm"
 sudo /usr/bin/install -o root -g wheel -m 555 \
     "$SOURCE_ROOT/tools/doctor.py" "$CODE_ROOT/tools/doctor.py"
 sudo /usr/bin/install -o root -g wheel -m 555 \
@@ -171,6 +178,23 @@ tree.write(destination, encoding="UTF-8", xml_declaration=True)
 PYGEN
 chmod 644 "$PLIST_DEST"
 
+if [[ -e "$LEGACY_PLIST" || -L "$LEGACY_PLIST" ]]; then
+    if python3 "$LEGACY_MIGRATOR" \
+        --plist "$LEGACY_PLIST" \
+        --program "$LEGACY_WRAPPER" \
+        --watch "$BRIDGE_ROOT/control/requests"; then
+        if launchctl print "gui/$UID/$LEGACY_LABEL" >/dev/null 2>&1; then
+            launchctl bootout "gui/$UID/$LEGACY_LABEL"
+        fi
+        rm -f "$LEGACY_PLIST"
+        echo "  migrated this Grok install from legacy label $LEGACY_LABEL"
+    else
+        echo "  retained legacy $LEGACY_LABEL because it belongs to another install"
+    fi
+elif launchctl print "gui/$UID/$LEGACY_LABEL" >/dev/null 2>&1; then
+    echo "  legacy $LEGACY_LABEL is loaded without a verifiable plist; left untouched"
+fi
+
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
     launchctl bootout "gui/$UID/$LABEL"
 fi
@@ -190,7 +214,7 @@ Add an allowed contact before reading:
   python3 "$CODE_ROOT/tools/configure_allowlist.py" add +15551234567
 
 Grant Full Disk Access to:
-  $CODE_ROOT/bin/cowork-imessage-helper
+  $CODE_ROOT/bin/grokbot-imessage-helper
 
 Then verify:
   python3 "$CODE_ROOT/tools/doctor.py" --bridge "$BRIDGE_ROOT" --code-root "$CODE_ROOT"

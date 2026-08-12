@@ -19,6 +19,10 @@ version reported by the `status` action.
   the FDA-bearing helper rejects symlinked or permissive bridge paths.
 - Reject oversized or structurally invalid request JSON without interrupting
   later requests in the queue.
+- Give Grok Bot its own LaunchAgent, plist, wrapper, and confirmation identity
+  so it can coexist with the Claude Cowork sibling helper.
+- Migrate the old shared LaunchAgent only when it points to this exact Grok
+  installation.
 
 ## 1.0.0 - 2026-08-11
 
