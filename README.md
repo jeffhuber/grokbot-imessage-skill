@@ -289,7 +289,8 @@ The helper opens the bridge and its runtime directories through anchored,
 no-follow directory descriptors. It rejects symlinks, non-user-owned objects,
 and group/world-accessible runtime directories instead of changing their
 permissions. Request files must be regular files owned by the current user and
-are limited to 64 KiB. Rerun the installer if `doctor.py` reports unsafe modes.
+are limited to 64 KiB; nonce files must also be regular, current-user-owned,
+and mode `600`. Rerun the installer if `doctor.py` reports unsafe modes.
 
 Message reads use SQLite's [online backup API](https://sqlite.org/backup.html)
 to create a consistent temporary snapshot, including committed rows still in

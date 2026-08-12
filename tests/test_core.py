@@ -127,6 +127,10 @@ class SendGateTests(unittest.TestCase):
 
     def test_nonce_round_trip_and_replay_rejection(self) -> None:
         nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+        nonce_path = (
+            Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces" / f"{nonce}.json"
+        )
+        self.assertEqual(stat.S_IMODE(nonce_path.stat().st_mode), 0o600)
         helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
         with self.assertRaises(helper.SendGateError):
             helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")

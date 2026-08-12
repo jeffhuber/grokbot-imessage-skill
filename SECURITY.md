@@ -75,8 +75,9 @@ The FDA-bearing Python process opens the bridge path component-by-component
 with `O_NOFOLLOW`, then performs request, response, log, and nonce operations
 relative to verified directory descriptors. The bridge and runtime directories
 must be owned by the current user with no group/world permissions. Existing
-unsafe objects are rejected rather than chmodded. Request and nonce files must
-be regular, current-user-owned files; request payloads are capped at 64 KiB.
+unsafe objects are rejected rather than chmodded. Request files must be regular
+and current-user-owned; nonce files must additionally be mode `600`. Request
+payloads are capped at 64 KiB.
 The LaunchAgent sends process stdout/stderr to `/dev/null`, leaving structured
 helper diagnostics to the same descriptor-relative internal logger.
 

@@ -1522,13 +1522,18 @@ def reap_expired_responses() -> None:
                 if not (name.startswith("response-") and name.endswith(".json")):
                     continue
                 try:
-                    metadata = _stat_regular_at(responses_fd, name, private=True)
+                    # Legacy releases may have left broader file modes. The
+                    # containing directory is private; unlinking a verified
+                    # regular, current-user-owned file does not follow it.
+                    metadata = _stat_regular_at(responses_fd, name)
                     if now - metadata.st_mtime > RESPONSE_TTL_S:
                         os.unlink(name, dir_fd=responses_fd)
                 except (OSError, UnsafeRuntimePath) as e:
                     log(f"response reaper could not remove {name}: {e}")
-    except FileNotFoundError:
-        return
+    except UnsafeRuntimePath as e:
+        if isinstance(e.__cause__, FileNotFoundError):
+            return
+        raise
 
 
 def _read_request_text(req_path: Path, requests_fd: int | None) -> str:

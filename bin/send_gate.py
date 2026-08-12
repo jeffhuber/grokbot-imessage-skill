@@ -103,8 +103,8 @@ def _validate_nonce_file(fd: int, label: str) -> None:
         raise RuntimeError(f"{label} is not a regular file")
     if metadata.st_uid != os.getuid():
         raise RuntimeError(f"{label} is not owned by the current user")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise RuntimeError(f"{label} must not have group/world permissions")
+    if stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise RuntimeError(f"{label} must have mode 600")
     if metadata.st_size > _MAX_NONCE_RECORD_BYTES:
         raise RuntimeError(f"{label} is too large")
 

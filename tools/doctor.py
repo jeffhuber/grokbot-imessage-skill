@@ -22,8 +22,13 @@ def mode(path: pathlib.Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def absolute_path_preserving_dotdot(path: pathlib.Path) -> pathlib.Path:
+    expanded = path.expanduser()
+    return expanded if expanded.is_absolute() else pathlib.Path.cwd() / expanded
+
+
 def has_symlink_component(path: pathlib.Path) -> bool:
-    absolute = pathlib.Path(os.path.abspath(path.expanduser()))
+    absolute = absolute_path_preserving_dotdot(path)
     current = pathlib.Path(absolute.anchor)
     for component in absolute.parts[1:]:
         current /= component
@@ -37,8 +42,8 @@ def run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
-    bridge = pathlib.Path(os.path.abspath(args.bridge.expanduser()))
-    code_root = pathlib.Path(os.path.abspath((args.code_root or bridge).expanduser()))
+    bridge = absolute_path_preserving_dotdot(args.bridge)
+    code_root = absolute_path_preserving_dotdot(args.code_root or bridge)
     hardened = code_root != bridge
     expected_code_uid = 0 if hardened else os.getuid()
     checks: dict[str, dict[str, str]] = {}
@@ -57,7 +62,7 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
 
     code_ok = (
         code_root.is_dir()
-        and not code_root.is_symlink()
+        and not has_symlink_component(code_root)
         and code_root.stat().st_uid == expected_code_uid
         and mode(code_root) & 0o022 == 0
     )
@@ -88,7 +93,7 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
         allowed_mode = 0o555 if hardened else 0o700
         ok = (
             path.is_file()
-            and not path.is_symlink()
+            and not has_symlink_component(path)
             and os.access(path, os.X_OK)
             and path.stat().st_uid == expected_code_uid
             and mode(path) == allowed_mode
@@ -106,7 +111,7 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
         expected_uid = expected_code_uid if name.endswith("source") else os.getuid()
         ok = (
             path.is_file()
-            and not path.is_symlink()
+            and not has_symlink_component(path)
             and path.stat().st_uid == expected_uid
             and mode(path) == expected
         )
@@ -122,7 +127,7 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
     expected_allowlist_mode = 0o600
     allowlist_ok = (
         allowlist.is_file()
-        and not allowlist.is_symlink()
+        and not has_symlink_component(allowlist)
         and allowlist.stat().st_uid == expected_allowlist_uid
         and mode(allowlist) == expected_allowlist_mode
         and os.access(allowlist, os.R_OK)

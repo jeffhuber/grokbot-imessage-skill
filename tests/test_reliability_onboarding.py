@@ -277,6 +277,94 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(json.loads(result.stdout)["checks"]["bridge_root"]["status"], "fail")
 
+    def test_doctor_preserves_dotdot_while_checking_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-doctor-dotdot-test-") as td:
+            root = Path(os.path.realpath(td))
+            real_parent = root / "real-parent"
+            (real_parent / "child").mkdir(parents=True, mode=0o700)
+            bridge = real_parent / "bridge"
+            bridge.mkdir(mode=0o700)
+            link = root / "linked-child"
+            link.symlink_to(real_parent / "child", target_is_directory=True)
+            supplied = link / ".." / "bridge"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "doctor.py"),
+                    "--bridge",
+                    str(supplied),
+                    "--json",
+                    "--skip-grok",
+                    "--skip-launchd",
+                    "--skip-codesign",
+                    "--skip-chat-db",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertEqual(report["bridge"], str(supplied))
+        self.assertEqual(report["checks"]["bridge_root"]["status"], "fail")
+
+    def test_doctor_rejects_symlinked_code_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-doctor-code-symlink-test-") as td:
+            root = Path(os.path.realpath(td))
+            bridge = root / "bridge"
+            for directory in (
+                bridge / "control" / "requests",
+                bridge / "control" / "responses",
+                bridge / "contacts",
+            ):
+                directory.mkdir(parents=True, mode=0o700)
+            bridge.chmod(0o700)
+            real_bin = root / "real-bin"
+            real_bin.mkdir(mode=0o700)
+            for name, file_mode in (
+                ("helper.py", 0o500),
+                ("send_gate.py", 0o500),
+                ("cowork-imessage-helper", 0o700),
+                ("confirm-imessage-send", 0o700),
+            ):
+                path = real_bin / name
+                path.write_text("fixture")
+                path.chmod(file_mode)
+            (bridge / "bin").symlink_to(real_bin, target_is_directory=True)
+            for name, contents in (
+                ("blocked_chats.txt", ""),
+                ("allowed_chats.txt", ""),
+                ("read_policy.txt", "blocklist\n"),
+            ):
+                path = bridge / "contacts" / name
+                path.write_text(contents)
+                path.chmod(0o600)
+            log = bridge / "control" / "log.txt"
+            log.write_text("")
+            log.chmod(0o600)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "doctor.py"),
+                    "--bridge",
+                    str(bridge),
+                    "--json",
+                    "--skip-grok",
+                    "--skip-launchd",
+                    "--skip-codesign",
+                    "--skip-chat-db",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertEqual(report["checks"]["helper_source"]["status"], "fail")
+        self.assertEqual(report["checks"]["fda_wrapper"]["status"], "fail")
+
 
 class SkillInstallTests(unittest.TestCase):
     def test_skill_installer_uses_grok_discovery_path(self) -> None:

@@ -194,12 +194,16 @@ class SensitiveArtifactTests(unittest.TestCase):
             response_dir.mkdir(mode=0o700)
             fresh = response_dir / "response-fresh.json"
             stale = response_dir / "response-stale.json"
+            legacy = response_dir / "response-legacy.json"
             fresh.write_text("{}")
             stale.write_text("{}")
+            legacy.write_text("{}")
             fresh.chmod(0o600)
             stale.chmod(0o600)
+            legacy.chmod(0o644)
             old = time.time() - helper.RESPONSE_TTL_S - 10
             os.utime(stale, (old, old))
+            os.utime(legacy, (old, old))
 
             with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
                 helper, "RESPONSES_DIR", response_dir
@@ -208,6 +212,19 @@ class SensitiveArtifactTests(unittest.TestCase):
 
             self.assertTrue(fresh.exists())
             self.assertFalse(stale.exists())
+            self.assertFalse(legacy.exists())
+
+    def test_response_reaper_tolerates_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-response-missing-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "RESPONSES_DIR", control / "responses"
+            ):
+                helper.reap_expired_responses()
 
     def test_log_is_mode_600_and_rotated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-log-test-") as td:
