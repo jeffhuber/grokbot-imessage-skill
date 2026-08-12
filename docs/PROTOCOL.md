@@ -19,6 +19,7 @@ The AI host runs in a sandboxed environment (Linux for Cowork, potentially remot
 2. launchd fires the helper within ~1 second (WatchPaths with 1s ThrottleInterval)
 3. The helper reads the request, processes it, and writes a response to `<bridge-folder>/control/responses/response-<id>.json`
 4. The AI host polls for and reads the response (typically 2–5s total)
+5. The AI host deletes the response immediately after parsing it
 
 ## Bridge Folder Layout
 
@@ -363,7 +364,7 @@ Searches Contacts.app by name. Returns up to 25 matches. Each match contains eit
 
 The `send_nonce` is the one returned by the preceding `send_preview`. The `to`, `text`, and `service` **must** match the preview exactly. If any of these differ, the helper rejects the request with a `"send payload differs from preview"` error.
 
-**v1.0.0+: Native macOS confirmation dialog.** After nonce validation succeeds, the helper displays a native macOS dialog showing the recipient (resolved name if available), service, and truncated message text. The user must click **Send** to proceed; clicking **Cancel** or waiting 60 seconds aborts the send. This enforces human approval at the helper level—even a valid nonce requires explicit user confirmation via the system dialog.
+**Native macOS confirmation dialog.** After nonce validation succeeds, the helper displays the resolved name, exact recipient address, service, and full message text in a scrollable read-only view. Cancel is the keyboard default. The user must deliberately select **Send**; cancelling or waiting 60 seconds aborts the send.
 
 **Response on success:**
 ```json
@@ -492,6 +493,7 @@ for _ in range(30):  # 15-second timeout
 
 # Read response
 data = json.loads(resp_path.read_text())
+resp_path.unlink(missing_ok=True)
 if data["ok"]:
     print(data)
 else:
@@ -554,7 +556,7 @@ System Settings → Privacy & Security → Automation
 | First send fails with Automation prompt | macOS needs Automation permission | Click **OK** on the prompt; future sends will work |
 | `send gate: missing nonce` | `send` called without prior `send_preview` | Always call `send_preview` first and pass the returned nonce |
 | `send payload differs from preview` | Body or recipient changed after preview | Re-run `send_preview` to mint a fresh nonce for the new payload |
-| Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt`—helper logs the first 64 bytes of unparseable blobs |
+| Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt` for a byte-count-only parser diagnostic |
 
 ---
 
@@ -574,7 +576,7 @@ System Settings → Privacy & Security → Automation
 | Path | Role |
 |------|------|
 | `control/requests/` | AI host writes request JSON here. Watched by launchd. |
-| `control/responses/` | Helper writes response JSON here. AI host reads. |
+| `control/responses/` | Helper writes mode-600 response JSON here. AI host reads and immediately deletes; helper reaps files older than one hour. |
 | `control/log.txt` | Helper stderr + logging. First place to check when debugging. |
 | `contacts/blocked_chats.txt` | User-maintained blocklist of sensitive chats. |
 | `bin/cowork-imessage-helper` | Compiled, ad-hoc signed C wrapper (the FDA target). |
