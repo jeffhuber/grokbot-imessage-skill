@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import plistlib
 import sqlite3
 import stat
 import subprocess
@@ -12,6 +13,88 @@ from pathlib import Path
 from unittest import mock
 
 from tests._helper_loader import REPO_ROOT, helper
+
+
+class LaunchAgentIdentityTests(unittest.TestCase):
+    def _write_plist(self, path: Path, program: str, watch: str) -> None:
+        with path.open("wb") as stream:
+            plistlib.dump(
+                {
+                    "Label": "com.user.cowork-imessage",
+                    "ProgramArguments": [program],
+                    "WatchPaths": [watch],
+                },
+                stream,
+            )
+
+    def _verify(self, plist: Path, program: str, watch: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "tools" / "migrate_legacy_launchagent.py"),
+                "--plist",
+                str(plist),
+                "--program",
+                program,
+                "--watch",
+                watch,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_legacy_migration_claims_only_exact_grok_install(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-legacy-agent-test-") as td:
+            root = Path(td)
+            plist = root / "legacy.plist"
+            program = str(root / "grok" / "bin" / "cowork-imessage-helper")
+            watch = str(root / "grok" / "control" / "requests")
+            self._write_plist(plist, program, watch)
+
+            own = self._verify(plist, program, watch)
+            foreign = self._verify(
+                plist,
+                str(root / "claude" / "bin" / "cowork-imessage-helper"),
+                str(root / "claude" / "control" / "requests"),
+            )
+
+        self.assertEqual(own.returncode, 0, own.stderr)
+        self.assertEqual(foreign.returncode, 1, foreign.stderr)
+
+    def test_legacy_migration_rejects_symlinked_plist(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-legacy-agent-test-") as td:
+            root = Path(td)
+            target = root / "target.plist"
+            link = root / "legacy.plist"
+            program = str(root / "bin" / "cowork-imessage-helper")
+            watch = str(root / "control" / "requests")
+            self._write_plist(target, program, watch)
+            link.symlink_to(target)
+
+            result = self._verify(link, program, watch)
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_legacy_migration_rejects_non_dictionary_plist(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-legacy-agent-test-") as td:
+            plist = Path(td) / "legacy.plist"
+            with plist.open("wb") as stream:
+                plistlib.dump(["not", "a", "launch-agent"], stream)
+
+            result = self._verify(plist, "/tmp/helper", "/tmp/requests")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+
+    def test_installers_and_uninstallers_use_only_grok_identity(self) -> None:
+        for name in ("install.sh", "install-hardened.sh", "uninstall.sh", "uninstall-hardened.sh"):
+            source = (REPO_ROOT / name).read_text()
+            self.assertIn("com.jeffhuber.grokbot-imessage", source, name)
+            self.assertNotIn("com.jeffhuber.claudecowork-imessage", source, name)
+
+        template = (REPO_ROOT / "com.jeffhuber.grokbot-imessage.plist.template").read_text()
+        self.assertIn("<string>com.jeffhuber.grokbot-imessage</string>", template)
+        self.assertIn("{{CODE_ROOT}}/bin/grokbot-imessage-helper", template)
 
 
 class SQLiteBackupTests(unittest.TestCase):
@@ -80,12 +163,15 @@ class StatusContractTests(unittest.TestCase):
             chat_db = Path(td) / "chat.db"
             chat_db.write_bytes(b"fixture")
             with mock.patch.object(helper, "CHAT_DB_PATH", chat_db), mock.patch.object(
-                helper, "CONFIRM_HELPER_PATH", Path(td) / "confirm-imessage-send"
+                helper, "CONFIRM_HELPER_PATH", Path(td) / "grokbot-imessage-confirm"
             ):
                 result = helper.action_status({}, None, {}, [])
 
         self.assertEqual(result["helper_version"], helper.HELPER_VERSION)
         self.assertEqual(result["protocol_version"], helper.PROTOCOL_VERSION)
+        self.assertEqual(result["product_id"], "grokbot-imessage")
+        self.assertEqual(result["host_display_name"], "Grok Bot")
+        self.assertEqual(result["launchd_label"], "com.jeffhuber.grokbot-imessage")
         self.assertTrue(result["checks"]["chat_db_exists"])
         self.assertNotIn("text", json.dumps(result))
 
@@ -209,8 +295,8 @@ class DoctorTests(unittest.TestCase):
                 path.write_text("# fixture\n")
                 path.chmod(0o500)
             for path in (
-                bridge / "bin" / "cowork-imessage-helper",
-                bridge / "bin" / "confirm-imessage-send",
+                bridge / "bin" / "grokbot-imessage-helper",
+                bridge / "bin" / "grokbot-imessage-confirm",
             ):
                 path.write_text("fixture")
                 path.chmod(0o700)
@@ -325,8 +411,8 @@ class DoctorTests(unittest.TestCase):
             for name, file_mode in (
                 ("helper.py", 0o500),
                 ("send_gate.py", 0o500),
-                ("cowork-imessage-helper", 0o700),
-                ("confirm-imessage-send", 0o700),
+                ("grokbot-imessage-helper", 0o700),
+                ("grokbot-imessage-confirm", 0o700),
             ):
                 path = real_bin / name
                 path.write_text("fixture")

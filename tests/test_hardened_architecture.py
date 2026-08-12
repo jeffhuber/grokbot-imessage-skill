@@ -210,6 +210,12 @@ class HardenedInstallerTests(unittest.TestCase):
         self.assertIn("contacts/allowed_chats.txt", entries)
         self.assertIn("contacts/read_policy.txt", entries)
 
+    def test_installers_preflight_existing_runtime_paths(self) -> None:
+        for name in ("install.sh", "install-hardened.sh"):
+            script = (REPO_ROOT / name).read_text()
+            self.assertIn("require_safe_runtime_entry", script, name)
+            self.assertIn('[[ -L "$path" ]]', script, name)
+
     def test_allowlist_tool_has_fixed_per_user_destination_and_validation(self) -> None:
         path = configure_allowlist.allowlist_path()
         self.assertEqual(path.name, "allowed_chats.txt")
@@ -223,8 +229,8 @@ class HardenedInstallerTests(unittest.TestCase):
                 configure_allowlist.validate_entry(value)
 
     def test_plist_separates_code_and_runtime_roots(self) -> None:
-        template = (REPO_ROOT / "com.user.cowork-imessage.plist.template").read_text()
-        self.assertIn("{{CODE_ROOT}}/bin/cowork-imessage-helper", template)
+        template = (REPO_ROOT / "com.jeffhuber.grokbot-imessage.plist.template").read_text()
+        self.assertIn("{{CODE_ROOT}}/bin/grokbot-imessage-helper", template)
         self.assertIn("{{BRIDGE_ROOT}}/control/requests", template)
         self.assertNotIn("{{INSTALL_ROOT}}", template)
 

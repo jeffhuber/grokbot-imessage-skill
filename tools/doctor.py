@@ -86,8 +86,8 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
         checks[name] = check("pass" if ok else "fail", f"{path} mode={oct(mode(path)) if path.exists() else 'missing'}")
 
     executable_files = {
-        "fda_wrapper": code_root / "bin" / "cowork-imessage-helper",
-        "confirmation_helper": code_root / "bin" / "confirm-imessage-send",
+        "fda_wrapper": code_root / "bin" / "grokbot-imessage-helper",
+        "confirmation_helper": code_root / "bin" / "grokbot-imessage-confirm",
     }
     for name, path in executable_files.items():
         allowed_mode = 0o555 if hardened else 0o700
@@ -152,7 +152,7 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
             checks["launchd"] = check("fail", "launchctl not found")
         else:
             uid = os.getuid()
-            result = run([launchctl, "print", f"gui/{uid}/com.user.cowork-imessage"])
+            result = run([launchctl, "print", f"gui/{uid}/com.jeffhuber.grokbot-imessage"])
             checks["launchd"] = check(
                 "pass" if result.returncode == 0 else "fail",
                 "LaunchAgent loaded" if result.returncode == 0 else "LaunchAgent not loaded",

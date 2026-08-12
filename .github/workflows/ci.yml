@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py tools/configure_allowlist.py
+      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py tools/configure_allowlist.py tools/migrate_legacy_launchagent.py
       - run: python -m unittest discover -s tests -v
       - run: bash -n install.sh
       - run: bash -n install-skill.sh
@@ -39,18 +39,20 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s tests -v
-      - run: plutil -lint com.user.cowork-imessage.plist.template
+      - run: plutil -lint com.jeffhuber.grokbot-imessage.plist.template
       - name: Compile FDA wrapper
         run: >-
           clang -Wall -Wextra -Werror -O2
           -DHELPER_SCRIPT='"/tmp/helper.py"'
           -DSEND_GATE_SCRIPT='"/tmp/send_gate.py"'
-          -DCONFIRM_HELPER='"/tmp/confirm-imessage-send"'
+          -DCONFIRM_HELPER='"/tmp/grokbot-imessage-confirm"'
           -DBRIDGE_ROOT='"/tmp/imessage-bridge"'
           -DPYTHON_INTERPRETER='"/usr/bin/python3"'
+          -DHELPER_DISPLAY_NAME='"grokbot-imessage-helper"'
+          -DHOST_DISPLAY_NAME='"Grok Bot"'
           -fsyntax-only bin/cowork_imessage_helper.c
       - name: Compile native confirmation helper
         run: >-
           clang -Wall -Wextra -Werror -fobjc-arc
           -framework AppKit -framework Foundation
-          -o /tmp/confirm-imessage-send bin/confirm_imessage_send.m
+          -o /tmp/grokbot-imessage-confirm bin/confirm_imessage_send.m

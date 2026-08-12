@@ -1,5 +1,5 @@
 /*
- * cowork-imessage-helper
+ * Host-specific iMessage helper launcher
  *
  * FDA-bearing launcher for the Python worker. Installers bake in every trusted
  * code path and the separate runtime bridge path. The hardened installer sets
@@ -53,38 +53,47 @@
 #define REQUIRE_ROOT_POLICY 0
 #endif
 
+#ifndef HELPER_DISPLAY_NAME
+#define HELPER_DISPLAY_NAME "imessage-helper"
+#endif
+
+#ifndef HOST_DISPLAY_NAME
+#define HOST_DISPLAY_NAME "AI assistant"
+#endif
+
 extern char **environ;
 
 static int validate_file(const char *path, const char *label, uid_t owner,
                          bool require_executable) {
     struct stat st;
     if (lstat(path, &st) != 0) {
-        fprintf(stderr, "cowork-imessage-helper: %s missing at %s (%s)\n",
+        fprintf(stderr, "%s: %s missing at %s (%s)\n", HELPER_DISPLAY_NAME,
                 label, path, strerror(errno));
         return 2;
     }
     if (!S_ISREG(st.st_mode)) {
         fprintf(stderr,
-                "cowork-imessage-helper: %s %s is not a regular file; refusing\n",
-                label, path);
+                "%s: %s %s is not a regular file; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
         return 3;
     }
     if (st.st_uid != owner) {
         fprintf(stderr,
-                "cowork-imessage-helper: %s %s has uid %u, expected %u; refusing\n",
-                label, path, (unsigned int)st.st_uid, (unsigned int)owner);
+                "%s: %s %s has uid %u, expected %u; refusing\n",
+                HELPER_DISPLAY_NAME, label, path, (unsigned int)st.st_uid,
+                (unsigned int)owner);
         return 4;
     }
     if (st.st_mode & (S_IWGRP | S_IWOTH)) {
         fprintf(stderr,
-                "cowork-imessage-helper: %s %s is group/world writable; refusing\n",
-                label, path);
+                "%s: %s %s is group/world writable; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
         return 5;
     }
     if (require_executable && !(st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
         fprintf(stderr,
-                "cowork-imessage-helper: %s %s is not executable; refusing\n",
-                label, path);
+                "%s: %s %s is not executable; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
         return 6;
     }
     return 0;
@@ -94,7 +103,7 @@ static int set_env_value(char *buffer, size_t size, const char *name,
                          const char *value) {
     int written = snprintf(buffer, size, "%s=%s", name, value);
     if (written < 0 || (size_t)written >= size) {
-        fprintf(stderr, "cowork-imessage-helper: %s value is too long\n", name);
+        fprintf(stderr, "%s: %s value is too long\n", HELPER_DISPLAY_NAME, name);
         return -1;
     }
     return 0;
@@ -131,7 +140,8 @@ int main(int argc, char **argv) {
     if (lstat(READ_ALLOWLIST_PATH, &policy_st) != 0 ||
         (policy_st.st_mode & (S_IRWXG | S_IRWXO))) {
         fprintf(stderr,
-                "cowork-imessage-helper: read allowlist has group/world permissions; refusing\n");
+                "%s: read allowlist has group/world permissions; refusing\n",
+                HELPER_DISPLAY_NAME);
         return 5;
     }
 #endif
@@ -142,6 +152,7 @@ int main(int argc, char **argv) {
     static char policy_buf[64];
     static char allowlist_buf[PATH_MAX + 64];
     static char root_policy_buf[64];
+    static char host_display_buf[128];
 
     if (set_env_value(home_buf, sizeof(home_buf), "HOME",
                       pw && pw->pw_dir ? pw->pw_dir : "/") != 0 ||
@@ -153,7 +164,9 @@ int main(int argc, char **argv) {
                       "COWORK_IMESSAGE_READ_ALLOWLIST", READ_ALLOWLIST_PATH) != 0 ||
         set_env_value(root_policy_buf, sizeof(root_policy_buf),
                       "COWORK_IMESSAGE_REQUIRE_ROOT_POLICY",
-                      REQUIRE_ROOT_POLICY ? "1" : "0") != 0) {
+                      REQUIRE_ROOT_POLICY ? "1" : "0") != 0 ||
+        set_env_value(host_display_buf, sizeof(host_display_buf),
+                      "IMESSAGE_HOST_DISPLAY_NAME", HOST_DISPLAY_NAME) != 0) {
         return 7;
     }
 
@@ -165,6 +178,7 @@ int main(int argc, char **argv) {
         policy_buf,
         allowlist_buf,
         root_policy_buf,
+        host_display_buf,
         NULL,
     };
     environ = new_env;
@@ -177,7 +191,7 @@ int main(int argc, char **argv) {
     };
     execv(PYTHON_INTERPRETER, exec_argv);
 
-    fprintf(stderr, "cowork-imessage-helper: execv %s failed: %s\n",
+    fprintf(stderr, "%s: execv %s failed: %s\n", HELPER_DISPLAY_NAME,
             PYTHON_INTERPRETER, strerror(errno));
     return 1;
 }

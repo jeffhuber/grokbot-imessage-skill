@@ -10,7 +10,7 @@ if [[ "$EUID" -eq 0 ]]; then
     exit 1
 fi
 
-LABEL="com.user.cowork-imessage"
+LABEL="com.jeffhuber.grokbot-imessage"
 PLIST_DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SKILL_DEST="${GROK_HOME:-$HOME/.grok}/skills/imessage-grok-bot"
 PRODUCT_ROOT="/Library/Application Support/GrokBotIMessage"
@@ -45,6 +45,6 @@ Hardened helper uninstalled. Runtime data remains at:
   $BRIDGE_ROOT
 
 Delete that directory only after reviewing any responses/logs you need.
-Revoke cowork-imessage-helper under Full Disk Access and Automation in
+Revoke grokbot-imessage-helper under Full Disk Access and Automation in
 System Settings -> Privacy & Security.
 EOF

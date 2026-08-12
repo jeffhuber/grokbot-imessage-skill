@@ -41,20 +41,20 @@ ls -la "$BRIDGE/contacts/blocked_chats.txt"
 **Check the launchd agent status:**
 
 ```bash
-launchctl list | grep com.user.cowork-imessage
+launchctl list | grep com.jeffhuber.grokbot-imessage
 ```
 
 **Expected:** One line of output like:
 
-```
-12345   0   com.user.cowork-imessage
+```text
+12345   0   com.jeffhuber.grokbot-imessage
 ```
 
 The first number is the PID (can be `-` if the agent is loaded but not currently running). The second number (`0`) is the last exit status—`0` means success.
 
 **If this fails:**
-- Verify the plist exists: `ls -l ~/Library/LaunchAgents/com.user.cowork-imessage.plist`
-- Bootstrap manually: `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.user.cowork-imessage.plist`
+- Verify the plist exists: `ls -l ~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist`
+- Bootstrap manually: `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist`
 
 ---
 
@@ -162,10 +162,10 @@ confirm `protocol_version` begins with `1` and the installation checks are true.
 6. You see a confirmation: `sent_at` timestamp and resolved recipient name.
 7. The message appears in Messages.app on your Mac as sent.
 
-**On first send only:** macOS will prompt: *"cowork-imessage-helper wants to control Messages."* Click **OK**. This grants the Automation permission.
+**On first send only:** macOS will prompt: *"grokbot-imessage-helper wants to control Messages."* Click **OK**. This grants the Automation permission.
 
 **If this fails:**
-- **Automation prompt denied:** Re-enable in System Settings → Privacy & Security → Automation → cowork-imessage-helper → Messages.
+- **Automation prompt denied:** Re-enable in System Settings → Privacy & Security → Automation → grokbot-imessage-helper → Messages.
 - **`send gate: missing nonce`:** Grok Bot didn't call `send_preview` first. This is a skill bug—report it.
 - **`send payload differs from preview`:** Grok Bot changed the body or recipient between preview and send. Re-run the preview.
 

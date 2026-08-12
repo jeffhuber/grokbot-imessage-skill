@@ -38,11 +38,13 @@ int main(void) {
         }
 
         NSDictionary *payload = decoded;
+        NSString *clientName = RequiredString(payload, @"client_name");
         NSString *recipient = RequiredString(payload, @"to");
         NSString *resolvedName = RequiredString(payload, @"resolved_name");
         NSString *service = RequiredString(payload, @"service");
         NSString *message = RequiredString(payload, @"text");
-        if (recipient.length == 0 || service.length == 0 || message.length == 0) {
+        if (clientName.length == 0 || recipient.length == 0 ||
+            service.length == 0 || message.length == 0) {
             fprintf(stderr, "confirmation helper: required field missing\n");
             return 2;
         }
@@ -52,7 +54,8 @@ int main(void) {
 
         NSAlert *alert = [[NSAlert alloc] init];
         alert.alertStyle = NSAlertStyleWarning;
-        alert.messageText = @"Confirm iMessage Send";
+        alert.messageText = [NSString stringWithFormat:
+            @"Confirm %@ %@ Send", clientName, service];
         NSString *displayRecipient = resolvedName.length > 0
             ? [NSString stringWithFormat:@"%@ (%@)", resolvedName, recipient]
             : recipient;

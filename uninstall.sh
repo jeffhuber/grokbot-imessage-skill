@@ -15,7 +15,7 @@ if [[ "$EUID" -eq 0 ]]; then
     exit 1
 fi
 
-LABEL="com.user.cowork-imessage"
+LABEL="com.jeffhuber.grokbot-imessage"
 PLIST_DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 SKILL_DEST="${GROK_HOME:-$HOME/.grok}/skills/imessage-grok-bot"
 
@@ -41,7 +41,7 @@ Uninstalled the launchd agent.
 To fully remove the helper:
   - Delete this folder.
   - Open System Settings -> Privacy & Security -> Full Disk Access and
-    revoke 'cowork-imessage-helper'.
+    revoke 'grokbot-imessage-helper'.
   - Open System Settings -> Privacy & Security -> Automation and revoke
-    'cowork-imessage-helper -> Messages'.
+    'grokbot-imessage-helper -> Messages'.
 EOF

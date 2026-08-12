@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  com.user.cowork-imessage launchd agent.
+  com.jeffhuber.grokbot-imessage launchd agent.
 
   Fires when a file is added/modified inside control/requests/. The helper
   binary scans that directory and processes every pending request, so launchd
@@ -13,11 +13,11 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.user.cowork-imessage</string>
+  <string>com.jeffhuber.grokbot-imessage</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>{{CODE_ROOT}}/bin/cowork-imessage-helper</string>
+    <string>{{CODE_ROOT}}/bin/grokbot-imessage-helper</string>
   </array>
 
   <key>WatchPaths</key>
