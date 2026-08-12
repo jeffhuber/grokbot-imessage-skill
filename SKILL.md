@@ -416,7 +416,8 @@ Check `<bridge>/control/log.txt` first when debugging. It contains helper stderr
 - **No attachments, images, stickers, audio, Tapback reactions.** Text fields only.
 - **No message editing or deletion.** Once sent, a message is immutable from the helper's perspective.
 - **No message effects** (balloons, confetti, invisible ink).
-- **No group-chat creation.** Can send *to* an existing group chat ID, but not stand one up.
+- **No group-chat sending.** Group chat IDs can be read (`review`, `chat_history`), but **cannot be used as send targets**. Sending requires individual phone numbers or email addresses.
+- **No group-chat creation.** Cannot create new group chats.
 - **Only reads local `chat.db`.** If a thread hasn't synced to this Mac, it won't appear in search/review.
 
 ---
