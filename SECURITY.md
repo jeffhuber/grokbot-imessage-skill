@@ -81,12 +81,18 @@ payloads are capped at 64 KiB.
 The LaunchAgent sends process stdout/stderr to `/dev/null`, leaving structured
 helper diagnostics to the same descriptor-relative internal logger.
 
+The Grok installation has its own LaunchAgent, plist, executable names, bridge,
+and hardened code root. The sibling Claude Cowork helper can therefore run at
+the same time without sharing request queues, policy files, responses, logs, or
+nonces. Both helpers still rely on the same macOS Messages database and
+Messages Automation surface.
+
 ### Automation → Messages (v0.3.0+)
 
 Required to send. The first send triggers a one-time macOS prompt:
-"cowork-imessage-helper wants to control Messages." The grant lives
+"grokbot-imessage-helper wants to control Messages." The grant lives
 under System Settings → Privacy & Security → Automation →
-cowork-imessage-helper → Messages.
+grokbot-imessage-helper → Messages.
 
 Concretely, this grants the helper the ability to:
 
@@ -163,13 +169,12 @@ nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
 seconds), or a nonce whose bound payload differs from the `send` request's
 `(to, text, service)` is rejected before the dialog appears. Nonces are stored as per-file records under `<bridge-folder>/nonces/`; the nonce directory is mode `700` and nonce files are mode `600`. Nonces are single-use (deleted on consume) and are also deleted on validation failure so the same nonce cannot be retried with a corrected payload.
 
-An attacker who can write to the bridge folder would need to:
-1. Race a real, user-approved preview inside its 60-second window *and*
-   send the exact same payload the user saw in chat — they cannot
-   silently swap the recipient or body.
-2. Wait for the victim to click **Send** in the native macOS dialog that
-   appears on their screen. The dialog shows recipient, service, and
-   complete message body; the victim can inspect the exact attack payload.
+An attacker who can write to and read from the bridge can mint its own preview
+nonce; the nonce is not an authorization boundary against that attacker. It
+still prevents a blind one-request send, replay, or swapping the payload after a
+preview. To complete any attacker-created send, the victim must deliberately
+click **Send** in the native dialog showing the exact recipient, service, and
+complete message body. Unexpected dialogs should always be cancelled.
 
 The v0.3.x AI-side check still runs as well; the helper-side nonce gate
 and native dialog are defense in depth, not a replacement.
@@ -280,8 +285,10 @@ You can verify what's actually on your disk:
   archives include a `SHA256SUMS` file, and the source is small enough to diff
   against a local clone.
 - After install, verify the LaunchAgent plist under
-  `~/Library/LaunchAgents/com.user.cowork-imessage.plist` points only
-  at the wrapper in the bridge folder and carries no other arguments.
+  `~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` points only
+  at the selected wrapper: the bridge-folder binary in standard mode or the
+  root-owned code-root binary in hardened mode. It must carry no other
+  arguments.
 
 ## Revoking
 
@@ -291,9 +298,9 @@ To fully remove the helper's access:
 2. Delete the bridge folder: `rm -rf ~/imessage-bridge` (or wherever
    you installed it).
 3. System Settings → Privacy & Security → Full Disk Access → remove
-   `cowork-imessage-helper`.
+   `grokbot-imessage-helper`.
 4. System Settings → Privacy & Security → Automation →
-   cowork-imessage-helper → turn Messages off (or remove the entry
+   grokbot-imessage-helper → turn Messages off (or remove the entry
    entirely).
 
 ## Reporting a vulnerability

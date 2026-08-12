@@ -89,6 +89,7 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         call = run.call_args
         self.assertEqual(call.args[0], [str(helper.CONFIRM_HELPER_PATH)])
         payload = json.loads(call.kwargs["input"])
+        self.assertEqual(payload["client_name"], "Grok Bot")
         self.assertEqual(payload["to"], "+14155551234")
         self.assertEqual(payload["resolved_name"], "Alice Example")
         self.assertEqual(payload["text"], "all of this text must be visible")
@@ -127,6 +128,7 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         self.assertIn('sendButton.keyEquivalent = @""', source)
         self.assertIn("timerWithTimeInterval:kConfirmationTimeoutSeconds", source)
         self.assertIn("forMode:NSModalPanelRunLoopMode", source)
+        self.assertIn('@"client_name"', source)
         self.assertNotIn("scheduledTimerWithTimeInterval", source)
 
 
@@ -344,7 +346,7 @@ class SensitiveArtifactTests(unittest.TestCase):
             self.assertEqual(list(victim.iterdir()), [])
 
     def test_launchd_does_not_open_user_controlled_log_path(self) -> None:
-        plist = (REPO_ROOT / "com.user.cowork-imessage.plist.template").read_text()
+        plist = (REPO_ROOT / "com.jeffhuber.grokbot-imessage.plist.template").read_text()
         self.assertNotIn("{{BRIDGE_ROOT}}/control/log.txt", plist)
         self.assertEqual(plist.count("<string>/dev/null</string>"), 2)
 

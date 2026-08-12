@@ -16,7 +16,11 @@ from pathlib import Path
 PRODUCT_ROOT = Path("/Library/Application Support/GrokBotIMessage")
 HEADER = "# Root-owned read allowlist. Managed by configure_allowlist.py.\n"
 PHONE_RE = re.compile(r"^[+0-9().\- ]+$")
-EMAIL_RE = re.compile(r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$")
+EMAIL_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+EMAIL_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+EMAIL_RE = re.compile(
+    rf"^{EMAIL_ATOM}(?:\.{EMAIL_ATOM})*@{EMAIL_LABEL}(?:\.{EMAIL_LABEL})+$"
+)
 CHAT_RE = re.compile(r"^chat[A-Za-z0-9;_+.-]+$")
 
 

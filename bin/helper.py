@@ -15,7 +15,7 @@ Security posture:
   - Response writes are atomic (tmp + rename) so the agent never reads a
     half-written file.
 
-This script should be invoked only by the signed `cowork-imessage-helper`
+This script should be invoked only by the signed `grokbot-imessage-helper`
 wrapper. Running it directly still works but without the environment
 hardening the wrapper provides.
 """
@@ -65,8 +65,9 @@ ALLOWLIST_PATH = Path(
     )
 )
 READ_POLICY_PATH = BRIDGE_ROOT / "contacts" / "read_policy.txt"
-CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "confirm-imessage-send"
+CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "grokbot-imessage-confirm"
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
+HOST_DISPLAY_NAME = os.environ.get("IMESSAGE_HOST_DISPLAY_NAME", "Grok Bot")
 
 HELPER_VERSION = "1.1.0"
 PROTOCOL_VERSION = "1.1"
@@ -786,7 +787,12 @@ def validate_search(v: Any) -> str:
     return v
 
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+_EMAIL_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_RE = re.compile(
+    rf"^{_EMAIL_ATOM}(?:\.{_EMAIL_ATOM})*@"
+    rf"{_EMAIL_LABEL}(?:\.{_EMAIL_LABEL})+$"
+)
 _PHONE_RE = re.compile(r"^[+0-9().\- ]+$")
 
 
@@ -808,7 +814,7 @@ def validate_send_recipient(v: Any) -> str:
         raise ValueError("group chat IDs are not supported for sending; use a phone number or email")
 
     if "@" in identifier:
-        if not _EMAIL_RE.match(identifier):
+        if not _EMAIL_RE.fullmatch(identifier):
             raise ValueError("send recipient must be a valid email address or phone number")
         return identifier.strip().lower()
 
@@ -892,6 +898,7 @@ def _run_send_confirmation(
     """
     payload = json.dumps(
         {
+            "client_name": HOST_DISPLAY_NAME,
             "to": to,
             "resolved_name": resolved_name,
             "service": service,
@@ -1296,6 +1303,9 @@ def action_status(params, conn, contacts, privacy_policy):
     return {
         "helper_version": HELPER_VERSION,
         "protocol_version": PROTOCOL_VERSION,
+        "product_id": "grokbot-imessage",
+        "host_display_name": HOST_DISPLAY_NAME,
+        "launchd_label": "com.jeffhuber.grokbot-imessage",
         "code_root": str(CODE_ROOT),
         "bridge_root": str(BRIDGE_ROOT),
         "install_root": str(CODE_ROOT),
