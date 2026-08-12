@@ -17,10 +17,16 @@ fi
 
 LABEL="com.user.cowork-imessage"
 PLIST_DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
+SKILL_DEST="${GROK_HOME:-$HOME/.grok}/skills/imessage-grok-bot"
 
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
     launchctl bootout "gui/$UID/$LABEL"
     echo "  launchd agent unloaded"
+fi
+
+if [[ -d "$SKILL_DEST" ]]; then
+    rm -rf "$SKILL_DEST"
+    echo "  removed Grok skill $SKILL_DEST"
 fi
 
 if [[ -f "$PLIST_DEST" ]]; then

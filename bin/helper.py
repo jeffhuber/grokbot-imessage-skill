@@ -26,7 +26,6 @@ import glob
 import json
 import os
 import re
-import shutil
 import sqlite3
 import struct
 import sys
@@ -48,6 +47,10 @@ RESPONSES_DIR = INSTALL_ROOT / "control" / "responses"
 LOG_PATH = INSTALL_ROOT / "control" / "log.txt"
 BLOCKLIST_PATH = INSTALL_ROOT / "contacts" / "blocked_chats.txt"
 CONFIRM_HELPER_PATH = INSTALL_ROOT / "bin" / "confirm-imessage-send"
+CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
+
+HELPER_VERSION = "1.1.0"
+PROTOCOL_VERSION = "1.1"
 
 # ---------------------------------------------------------------------------
 # Sibling module loading
@@ -700,21 +703,30 @@ def _run_send_confirmation(
 # DB handling
 # ---------------------------------------------------------------------------
 def copy_chatdb() -> Path:
-    src = Path.home() / "Library" / "Messages" / "chat.db"
-    if not src.exists():
-        raise RuntimeError(f"chat.db not found at {src}")
+    if not CHAT_DB_PATH.exists():
+        raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
     fd, tmp = tempfile.mkstemp(prefix="cowork_imessage_", suffix=".db")
     os.close(fd)
-    shutil.copy2(src, tmp)
-    # WAL sidecars — copy if present so the snapshot is consistent.
-    for sidecar in ("-wal", "-shm"):
-        sc = Path(str(src) + sidecar)
-        if sc.exists():
-            try:
-                shutil.copy2(sc, tmp + sidecar)
-            except Exception as e:
-                log(f"sidecar {sidecar}: {e}")
-    return Path(tmp)
+    snapshot = Path(tmp)
+    source = None
+    destination = None
+    try:
+        # chat.db is live and may contain uncheckpointed WAL rows. Do not use
+        # immutable=1 here: it asserts the file cannot change and disables
+        # locking/change detection. The online backup API supplies the snapshot.
+        source_uri = f"{CHAT_DB_PATH.resolve().as_uri()}?mode=ro&cache=private"
+        source = sqlite3.connect(source_uri, uri=True, timeout=5)
+        destination = sqlite3.connect(str(snapshot))
+        source.backup(destination)
+        return snapshot
+    except Exception:
+        cleanup_tmpdb(snapshot)
+        raise
+    finally:
+        if destination is not None:
+            destination.close()
+        if source is not None:
+            source.close()
 
 
 def cleanup_tmpdb(path: Path) -> None:
@@ -1035,6 +1047,28 @@ def action_contacts_lookup(params, conn, contacts, blocklist):
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
 
 
+def action_status(params, conn, contacts, blocklist):
+    """Return compatibility and local-install status without reading messages."""
+    return {
+        "helper_version": HELPER_VERSION,
+        "protocol_version": PROTOCOL_VERSION,
+        "install_root": str(INSTALL_ROOT),
+        "python_version": sys.version.split()[0],
+        "checks": {
+            "chat_db_exists": CHAT_DB_PATH.is_file(),
+            "chat_db_readable": os.access(CHAT_DB_PATH, os.R_OK),
+            "confirmation_helper_exists": CONFIRM_HELPER_PATH.is_file(),
+            "confirmation_helper_executable": os.access(CONFIRM_HELPER_PATH, os.X_OK),
+            "requests_dir_exists": REQUESTS_DIR.is_dir(),
+            "responses_dir_exists": RESPONSES_DIR.is_dir(),
+        },
+    }
+
+
+action_status.needs_db = False  # type: ignore[attr-defined]
+action_status.needs_contacts = False  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # Send actions (AppleScript-driven)
 # ---------------------------------------------------------------------------
@@ -1178,6 +1212,7 @@ action_send.needs_db = False  # type: ignore[attr-defined]
 
 
 ACTIONS = {
+    "status": action_status,
     "review": action_review,
     "search": action_search,
     "chat_history": action_chat_history,
@@ -1278,7 +1313,8 @@ def process_request(req_path: Path, blocklist: list[str]) -> None:
             db_path = copy_chatdb()
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             conn.text_factory = bytes
-        contacts = load_contacts()
+        needs_contacts = getattr(action_fn, "needs_contacts", True)
+        contacts = load_contacts() if needs_contacts else {}
         result = action_fn(params, conn, contacts, blocklist)
         if conn is not None:
             conn.close()

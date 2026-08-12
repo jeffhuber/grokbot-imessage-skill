@@ -2,6 +2,12 @@
 
 This document describes the JSON-based request/response protocol that both Claude Cowork and Grok Bot use to communicate with the macOS helper.
 
+Protocol version: `1.1`
+
+Clients should call `status` before their first message operation and require a
+compatible `protocol_version`. Minor versions add backward-compatible actions or
+fields; a future major-version mismatch must fail closed with upgrade guidance.
+
 ## Architecture
 
 ```
@@ -29,6 +35,7 @@ After installation, the bridge folder contains:
 <bridge-folder>/
 ├── bin/
 │   ├── cowork-imessage-helper      # Compiled C wrapper (FDA target)
+│   ├── confirm-imessage-send       # Native, fail-safe send confirmation
 │   ├── helper.py                    # Python worker (reads chat.db, calls osascript)
 │   └── send_gate.py                 # Nonce validation for sends
 ├── control/
@@ -39,6 +46,7 @@ After installation, the bridge folder contains:
 │   └── blocked_chats.txt            # User-maintained blocklist
 ├── nonces/                          # Short-lived send-preview nonces
 ├── install.sh
+├── install-skill.sh
 ├── uninstall.sh
 └── com.user.cowork-imessage.plist.template
 ```
@@ -81,6 +89,20 @@ On error:
 ```
 
 ## Actions
+
+### `status` — Compatibility and installation checks
+
+`status` does not read `chat.db` or return message content.
+
+```json
+{"id": "abc123", "action": "status", "params": {}}
+```
+
+The response includes `helper_version`, `protocol_version`, `install_root`,
+`python_version`, and local boolean checks for the database, request directories,
+and native confirmation helper.
+
+---
 
 ### `review` — Triage recent messages
 

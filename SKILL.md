@@ -7,7 +7,7 @@ description: >
   stats, or send a plain-text iMessage. macOS only—uses an on-device launchd
   helper to query the Messages SQLite database and AppleScript (osascript) to
   send outbound messages.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # iMessage on macOS — Grok Bot
@@ -70,6 +70,9 @@ ls -la "$BRIDGE/control/requests" "$BRIDGE/control/responses" "$BRIDGE/bin/cowor
 
 If any are missing, the helper isn't installed. Guide the user through installation.
 
+Before the first message operation, call `status`. Require protocol major version
+`1`; if it differs, stop and tell the user to update the helper and skill together.
+
 **Store the bridge folder path** in your memory/context for the rest of the conversation. You'll use it for all subsequent request/response operations.
 
 ---
@@ -119,6 +122,15 @@ To invoke the helper, you:
 ## Actions
 
 Full protocol documentation is in `docs/PROTOCOL.md`. Below is a quick reference for each action.
+
+### `status` — Verify compatibility
+
+```json
+{"id": "abc123", "action": "status", "params": {}}
+```
+
+This action returns helper/protocol versions and local installation checks. It
+does not read `chat.db` or return message content.
 
 ### `review` — Triage recent messages
 
