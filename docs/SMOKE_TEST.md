@@ -8,8 +8,8 @@ Run this after initial installation or after rebuilding the helper.
 
 ## Prerequisites
 
-- [ ] Helper is installed (`install.sh` completed successfully)
-- [ ] Full Disk Access granted to `<bridge-folder>/bin/cowork-imessage-helper`
+- [ ] One installer completed successfully
+- [ ] Full Disk Access granted to the exact wrapper path printed by that installer
 - [ ] Grok Bot has access to execute shell commands on your Mac
 
 ---
@@ -22,17 +22,17 @@ Run this after initial installation or after rebuilding the helper.
 BRIDGE="<your-bridge-folder-path>"  # e.g., ~/imessage-bridge
 ls -la "$BRIDGE/control/requests"
 ls -la "$BRIDGE/control/responses"
-ls -la "$BRIDGE/bin/cowork-imessage-helper"
 ls -la "$BRIDGE/contacts/blocked_chats.txt"
 ```
 
 **Expected:**
 - All directories and files exist
 - `control/requests/` and `control/responses/` are mode `700`
-- `bin/cowork-imessage-helper` is an executable binary
 - `contacts/blocked_chats.txt` exists (may be empty or template-only)
+- Hardened installs report an `allowlist` read policy and return no message or
+  contact data until at least one identifier is added
 
-**If this fails:** Re-run `install.sh`.
+**If this fails:** Re-run the installer you selected.
 
 ---
 
@@ -210,7 +210,7 @@ You can now use Grok Bot to:
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| No response files appear | FDA not granted | Grant FDA to `<bridge>/bin/cowork-imessage-helper` in System Settings |
+| No response files appear | FDA not granted | Grant FDA to the exact wrapper path printed by the installer |
 | `sqlite3.OperationalError` in logs | FDA not granted or stale | Re-add the wrapper in System Settings → Full Disk Access |
 | Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
 | `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
@@ -220,7 +220,8 @@ You can now use Grok Bot to:
 
 ## Next Steps
 
-- Add sensitive threads to `contacts/blocked_chats.txt` (therapists, attorneys, family, etc.)
+- Hardened install: add only the contacts the user intends to expose with `configure_allowlist.py`
+- Standard install: add sensitive threads to `contacts/blocked_chats.txt`
 - Explore chained workflows: "Triage the last 3 days, then draft replies to anything actionable."
 - Read the full protocol: `docs/PROTOCOL.md`
 - Review security details: `SECURITY.md`

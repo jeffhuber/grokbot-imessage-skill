@@ -1,0 +1,14 @@
+# Allowed reads. One phone, email, or group chat identifier per line.
+#
+# This file is used only when read_policy.txt contains "allowlist" or when the
+# hardened wrapper enforces allowlist mode. In that mode, no message or contact
+# result is returned unless its handle matches an entry here. The blocklist
+# still takes precedence.
+#
+# Phone numbers match by their last 10 digits. Email and group identifiers
+# match case-insensitively.
+#
+# Examples:
+# +15551234567
+# colleague@example.com
+# chat123456789

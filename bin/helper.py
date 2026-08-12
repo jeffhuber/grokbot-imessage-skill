@@ -10,7 +10,7 @@ Security posture:
   - Actions are strictly whitelisted (no eval/exec/shell-out).
   - All SQL uses parameterized queries.
   - chat.db is copied to a per-run tempfile (cleaned up on exit).
-  - Blocklisted chats are dropped before any message text is returned.
+  - Read policy is applied before any message text is returned.
   - 2FA codes, card numbers, and SSN patterns are redacted in responses.
   - Response writes are atomic (tmp + rename) so the agent never reads a
     half-written file.
@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sqlite3
+import stat
 import struct
 import sys
 import tempfile
@@ -34,6 +35,7 @@ import time
 import traceback
 import uuid
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -41,12 +43,26 @@ from typing import Any, Iterable
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-INSTALL_ROOT = Path(__file__).resolve().parent.parent
-REQUESTS_DIR = INSTALL_ROOT / "control" / "requests"
-RESPONSES_DIR = INSTALL_ROOT / "control" / "responses"
-LOG_PATH = INSTALL_ROOT / "control" / "log.txt"
-BLOCKLIST_PATH = INSTALL_ROOT / "contacts" / "blocked_chats.txt"
-CONFIRM_HELPER_PATH = INSTALL_ROOT / "bin" / "confirm-imessage-send"
+CODE_ROOT = Path(__file__).resolve().parent.parent
+BRIDGE_ROOT = Path(os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR", CODE_ROOT)).expanduser().resolve()
+REQUESTS_DIR = BRIDGE_ROOT / "control" / "requests"
+RESPONSES_DIR = BRIDGE_ROOT / "control" / "responses"
+LOG_PATH = BRIDGE_ROOT / "control" / "log.txt"
+BLOCKLIST_PATH = BRIDGE_ROOT / "contacts" / "blocked_chats.txt"
+ALLOWLIST_PATH = Path(
+    os.path.abspath(
+        os.path.expanduser(
+            str(
+                os.environ.get(
+                    "COWORK_IMESSAGE_READ_ALLOWLIST",
+                    BRIDGE_ROOT / "contacts" / "allowed_chats.txt",
+                )
+            )
+        )
+    )
+)
+READ_POLICY_PATH = BRIDGE_ROOT / "contacts" / "read_policy.txt"
+CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "confirm-imessage-send"
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
 
 HELPER_VERSION = "1.1.0"
@@ -64,7 +80,7 @@ import importlib.util as _importlib_util  # noqa: E402
 
 
 def _load_sibling(name: str):
-    path = INSTALL_ROOT / "bin" / f"{name}.py"
+    path = CODE_ROOT / "bin" / f"{name}.py"
     spec = _importlib_util.spec_from_file_location(name, path)
     mod = _importlib_util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -73,7 +89,7 @@ def _load_sibling(name: str):
 
 # Route send_gate's state to our install tree so a non-default install
 # (helper lives somewhere other than ~/cowork-imessage/) still works.
-os.environ.setdefault("COWORK_IMESSAGE_BRIDGE_DIR", str(INSTALL_ROOT))
+os.environ.setdefault("COWORK_IMESSAGE_BRIDGE_DIR", str(BRIDGE_ROOT))
 _send_gate = _load_sibling("send_gate")
 SEND_NONCE_TTL = _send_gate.SEND_NONCE_TTL
 SendGateError = _send_gate.SendGateError
@@ -408,18 +424,86 @@ def group_label(participants: list[str], contacts: dict[str, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Blocklist
+# Read privacy policy
 # ---------------------------------------------------------------------------
-def load_blocklist() -> list[str]:
-    if not BLOCKLIST_PATH.exists():
-        return []
+@dataclass(frozen=True)
+class PrivacyPolicy:
+    mode: str
+    blocklist: tuple[str, ...]
+    allowlist: tuple[str, ...]
+
+
+def _load_list(path: Path, require_root_owner: bool = False) -> tuple[str, ...]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return ()
+    if require_root_owner:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0:
+            log(f"privacy policy rejected: {path} must be a root-owned regular file")
+            return ()
+        if metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+            log(f"privacy policy rejected: {path} has group/world permissions")
+            return ()
     out = []
-    for line in BLOCKLIST_PATH.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         out.append(line)
-    return out
+    return tuple(out)
+
+
+def load_privacy_policy() -> PrivacyPolicy:
+    mode_override = os.environ.get("COWORK_IMESSAGE_READ_POLICY", "runtime")
+    if mode_override in ("allowlist", "blocklist"):
+        mode = mode_override
+    else:
+        try:
+            mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
+        except FileNotFoundError:
+            mode = "blocklist"
+        if mode not in ("allowlist", "blocklist"):
+            log(f"invalid read policy {mode!r}; failing closed in allowlist mode")
+            mode = "allowlist"
+
+    require_root = os.environ.get("COWORK_IMESSAGE_REQUIRE_ROOT_POLICY") == "1"
+    return PrivacyPolicy(
+        mode=mode,
+        blocklist=_load_list(BLOCKLIST_PATH),
+        allowlist=_load_list(ALLOWLIST_PATH, require_root_owner=require_root),
+    )
+
+
+def load_blocklist() -> list[str]:
+    """Backward-compatible loader retained for existing integrations/tests."""
+    return list(_load_list(BLOCKLIST_PATH))
+
+
+def _coerce_policy(policy: PrivacyPolicy | list[str]) -> PrivacyPolicy:
+    if isinstance(policy, PrivacyPolicy):
+        return policy
+    return PrivacyPolicy(mode="blocklist", blocklist=tuple(policy), allowlist=())
+
+
+def _matches_list(chat_id: str, sender: str, entries: tuple[str, ...] | list[str]) -> bool:
+    if not entries:
+        return False
+    cid = chat_id or ""
+    snd = sender or ""
+    cid_l10 = _last10(cid)
+    snd_l10 = _last10(snd)
+    for entry in entries:
+        entry_l10 = _last10(entry)
+        if entry_l10 and (entry_l10 == cid_l10 or entry_l10 == snd_l10):
+            return True
+        if not entry_l10:
+            lowered = entry.lower()
+            if "@" in entry and (lowered == cid.lower() or lowered == snd.lower()):
+                return True
+            if "@" not in entry and (lowered in cid.lower() or lowered in snd.lower()):
+                return True
+    return False
 
 
 def _last10(s: str) -> str:
@@ -427,22 +511,17 @@ def _last10(s: str) -> str:
     return d[-10:] if len(d) >= 10 else ""
 
 
-def is_blocked(chat_id: str, sender: str, blocklist: list[str]) -> bool:
-    cid = chat_id or ""
-    snd = sender or ""
-    cid_l10 = _last10(cid)
-    snd_l10 = _last10(snd)
-    for b in blocklist:
-        b_l10 = _last10(b)
-        if b_l10 and (b_l10 == cid_l10 or b_l10 == snd_l10):
-            return True
-        # Non-numeric blocklist entries match as case-insensitive substring
-        # against chat_id / sender (covers email handles and group IDs).
-        if not b_l10:
-            bl = b.lower()
-            if bl in cid.lower() or bl in snd.lower():
-                return True
-    return False
+def is_blocked(chat_id: str, sender: str, policy: PrivacyPolicy | list[str]) -> bool:
+    return _matches_list(chat_id, sender, _coerce_policy(policy).blocklist)
+
+
+def is_read_allowed(chat_id: str, sender: str, policy: PrivacyPolicy | list[str]) -> bool:
+    resolved = _coerce_policy(policy)
+    if is_blocked(chat_id, sender, resolved):
+        return False
+    if resolved.mode == "allowlist":
+        return bool(_matches_list(chat_id, sender, resolved.allowlist))
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -806,8 +885,25 @@ def fetch_messages(
     return out
 
 
+def apply_read_policy(
+    msgs: list[dict], policy: PrivacyPolicy | list[str]
+) -> list[dict]:
+    return [m for m in msgs if is_read_allowed(m["chat_id"], m["sender"], policy)]
+
+
 def apply_blocklist(msgs: list[dict], blocklist: list[str]) -> list[dict]:
-    return [m for m in msgs if not is_blocked(m["chat_id"], m["sender"], blocklist)]
+    """Backward-compatible alias for blocklist-only callers."""
+    return apply_read_policy(msgs, blocklist)
+
+
+def filter_contacts(
+    contacts: dict[str, str], policy: PrivacyPolicy | list[str]
+) -> dict[str, str]:
+    return {
+        handle: name
+        for handle, name in contacts.items()
+        if is_read_allowed(handle, handle, policy)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -907,11 +1003,11 @@ def classify_chats(
 # ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
-def action_review(params, conn, contacts, blocklist):
+def action_review(params, conn, contacts, privacy_policy):
     days = validate_days(params.get("days", 2))
     cutoff_ns = to_apple_ns(time.time() - days * 86400)
     msgs = fetch_messages(conn, cutoff_ns)
-    msgs = apply_blocklist(msgs, blocklist)
+    msgs = apply_read_policy(msgs, privacy_policy)
     participants = load_chat_participants(conn)
     needs_reply, low_priority, skip = classify_chats(msgs, contacts, participants)
     return {
@@ -933,13 +1029,13 @@ def action_review(params, conn, contacts, blocklist):
     }
 
 
-def action_search(params, conn, contacts, blocklist):
+def action_search(params, conn, contacts, privacy_policy):
     term = validate_search(params.get("term"))
     days = validate_days(params.get("days", 30))
     limit = validate_limit(params.get("limit", 100))
     cutoff_ns = to_apple_ns(time.time() - days * 86400)
     msgs = fetch_messages(conn, cutoff_ns, search=term)
-    msgs = apply_blocklist(msgs, blocklist)
+    msgs = apply_read_policy(msgs, privacy_policy)
     # Sort descending by timestamp so newest matches come first.
     msgs.sort(key=lambda x: x["ts_ns"], reverse=True)
     matches = []
@@ -957,19 +1053,20 @@ def action_search(params, conn, contacts, blocklist):
     return {"term": term, "days": days, "match_count": len(matches), "matches": matches}
 
 
-def action_chat_history(params, conn, contacts, blocklist):
+def action_chat_history(params, conn, contacts, privacy_policy):
     chat_q = validate_chat(params.get("chat"))
     days = validate_days(params.get("days", 14))
     limit = validate_limit(params.get("limit", 100))
-    substr = resolve_chat_filter(chat_q, contacts)
+    visible_contacts = filter_contacts(contacts, privacy_policy)
+    substr = resolve_chat_filter(chat_q, visible_contacts)
     cutoff_ns = to_apple_ns(time.time() - days * 86400)
     msgs = fetch_messages(conn, cutoff_ns, chat_filter_substr=substr)
-    msgs = apply_blocklist(msgs, blocklist)
+    msgs = apply_read_policy(msgs, privacy_policy)
     msgs.sort(key=lambda x: x["ts_ns"])
     msgs = msgs[-limit:]
     out = []
     for m in msgs:
-        name = lookup_name(m["chat_id"], m["sender"], contacts)
+        name = lookup_name(m["chat_id"], m["sender"], visible_contacts)
         out.append(
             {
                 "chat_id": m["chat_id"],
@@ -982,13 +1079,13 @@ def action_chat_history(params, conn, contacts, blocklist):
     return {"chat_query": chat_q, "resolved_substr": substr, "count": len(out), "messages": out}
 
 
-def action_response_stats(params, conn, contacts, blocklist):
+def action_response_stats(params, conn, contacts, privacy_policy):
     chat_q = validate_chat(params.get("chat"))
     hours = validate_hours(params.get("hours", 24))
-    substr = resolve_chat_filter(chat_q, contacts)
+    substr = resolve_chat_filter(chat_q, filter_contacts(contacts, privacy_policy))
     cutoff_ns = to_apple_ns(time.time() - hours * 3600)
     msgs = fetch_messages(conn, cutoff_ns, chat_filter_substr=substr)
-    msgs = apply_blocklist(msgs, blocklist)
+    msgs = apply_read_policy(msgs, privacy_policy)
     msgs.sort(key=lambda x: x["ts_ns"])
 
     deltas: list[float] = []
@@ -1032,13 +1129,15 @@ def action_response_stats(params, conn, contacts, blocklist):
     }
 
 
-def action_contacts_lookup(params, conn, contacts, blocklist):
+def action_contacts_lookup(params, conn, contacts, privacy_policy):
     name = params.get("name", "")
     if not isinstance(name, str) or not name.strip() or len(name) > 100:
         raise ValueError("name must be a 1..100 char string")
     nl = name.lower()
     matches = []
     for handle, full_name in contacts.items():
+        if not is_read_allowed(handle, handle, privacy_policy):
+            continue
         if nl in full_name.lower():
             if "@" in handle:
                 matches.append({"name": full_name, "email": handle})
@@ -1047,13 +1146,22 @@ def action_contacts_lookup(params, conn, contacts, blocklist):
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
 
 
-def action_status(params, conn, contacts, blocklist):
+def action_status(params, conn, contacts, privacy_policy):
     """Return compatibility and local-install status without reading messages."""
+    policy = _coerce_policy(privacy_policy)
     return {
         "helper_version": HELPER_VERSION,
         "protocol_version": PROTOCOL_VERSION,
-        "install_root": str(INSTALL_ROOT),
+        "code_root": str(CODE_ROOT),
+        "bridge_root": str(BRIDGE_ROOT),
+        "install_root": str(CODE_ROOT),
         "python_version": sys.version.split()[0],
+        "read_policy": {
+            "mode": policy.mode,
+            "allowlist_entries": len(policy.allowlist),
+            "blocklist_entries": len(policy.blocklist),
+            "root_owned_required": os.environ.get("COWORK_IMESSAGE_REQUIRE_ROOT_POLICY") == "1",
+        },
         "checks": {
             "chat_db_exists": CHAT_DB_PATH.is_file(),
             "chat_db_readable": os.access(CHAT_DB_PATH, os.R_OK),
@@ -1083,7 +1191,7 @@ def _resolve_contact_name(to: str, contacts: dict[str, str]) -> str:
     return contacts.get(key, "") if key else ""
 
 
-def action_send_preview(params, conn, contacts, blocklist):
+def action_send_preview(params, conn, contacts, privacy_policy):
     """Non-destructive: resolve the recipient and return what *would* be sent.
 
     Intended flow — the agent calls `send_preview` first, shows the preview
@@ -1101,14 +1209,19 @@ def action_send_preview(params, conn, contacts, blocklist):
 
     send_nonce = mint_send_nonce(to, text, service)
 
+    resolved_name = (
+        _resolve_contact_name(to, contacts)
+        if is_read_allowed(to, to, privacy_policy)
+        else ""
+    )
     return {
         "preview": {
             "to": to,
-            "resolved_name": _resolve_contact_name(to, contacts),
+            "resolved_name": resolved_name,
             "service": service,
             "text": text,
             "text_length": len(text),
-            "blocked": is_blocked(to, to, blocklist),
+            "blocked": is_blocked(to, to, privacy_policy),
         },
         "send_nonce": send_nonce,
         "send_nonce_ttl_seconds": SEND_NONCE_TTL,
@@ -1118,7 +1231,7 @@ def action_send_preview(params, conn, contacts, blocklist):
 action_send_preview.needs_db = False  # type: ignore[attr-defined]
 
 
-def action_send(params, conn, contacts, blocklist):
+def action_send(params, conn, contacts, privacy_policy):
     """Send an iMessage (or SMS via iPhone relay) via AppleScript.
 
     The message body is written to a tempfile and read by AppleScript as
@@ -1136,7 +1249,7 @@ def action_send(params, conn, contacts, blocklist):
     text = validate_send_text(params.get("text"))
     service = validate_service(params.get("service"))
 
-    if is_blocked(to, to, blocklist):
+    if is_blocked(to, to, privacy_policy):
         raise ValueError(
             f"refusing to send: {to!r} is in contacts/blocked_chats.txt"
         )
@@ -1259,7 +1372,7 @@ def reap_expired_responses() -> None:
             log(f"response reaper could not remove {path.name}: {e}")
 
 
-def process_request(req_path: Path, blocklist: list[str]) -> None:
+def process_request(req_path: Path, privacy_policy: PrivacyPolicy | list[str]) -> None:
     # Derive safe response filename from request filename stem only.
     # Never use JSON id field for filesystem paths — it could contain slashes.
     req_stem = req_path.stem.replace("request-", "")
@@ -1315,7 +1428,7 @@ def process_request(req_path: Path, blocklist: list[str]) -> None:
             conn.text_factory = bytes
         needs_contacts = getattr(action_fn, "needs_contacts", True)
         contacts = load_contacts() if needs_contacts else {}
-        result = action_fn(params, conn, contacts, blocklist)
+        result = action_fn(params, conn, contacts, privacy_policy)
         if conn is not None:
             conn.close()
         result.update({"id": req_id, "action": action, "ok": True,
@@ -1336,7 +1449,7 @@ def main() -> None:
     _ensure_private_directory(LOG_PATH.parent)
     _ensure_private_directory(REQUESTS_DIR)
     _ensure_private_directory(RESPONSES_DIR)
-    blocklist = load_blocklist()
+    privacy_policy = load_privacy_policy()
 
     reap_expired_responses()
 
@@ -1356,7 +1469,7 @@ def main() -> None:
 
     for p in pending:
         try:
-            process_request(p, blocklist)
+            process_request(p, privacy_policy)
         finally:
             try:
                 p.unlink()

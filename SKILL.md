@@ -45,8 +45,8 @@ Sending goes through the **same** request/response bridge. You write a `send_pre
 The helper must be installed on the user's Mac before you can use this skill. **Installation is manual** and requires the user to:
 
 1. Clone or download this repository.
-2. Run `install.sh` from the directory they want to use as the bridge folder (any writable directory, e.g., `~/imessage-bridge`).
-3. Grant **Full Disk Access** to `<bridge-folder>/bin/cowork-imessage-helper` in System Settings → Privacy & Security → Full Disk Access.
+2. Run the recommended `install-hardened.sh` or the standard `install.sh`.
+3. Grant **Full Disk Access** to the exact wrapper path printed by the installer.
 4. (For sending) Approve the Automation prompt on first send: *"cowork-imessage-helper wants to control Messages."*
 
 If the user hasn't installed the helper yet, **direct them to the installation section** in `README.md`, or walk them through it step-by-step. Do not proceed with iMessage actions until the helper is installed and FDA is granted.
@@ -59,19 +59,22 @@ Before you can use the helper, you need to know where the bridge folder is locat
 
 Example prompt:
 
-> "To read your iMessages, I need to know where you installed the iMessage helper. What folder did you run `install.sh` in? (For example: `~/imessage-bridge` or `~/grokbot-imessage-skill`)"
+> "What bridge folder did the iMessage installer print? The hardened default is `~/Library/Application Support/GrokBotIMessage`."
 
 Once the user provides the path, verify it by checking for these files:
 
 ```bash
 BRIDGE="<user-provided-path>"
-ls -la "$BRIDGE/control/requests" "$BRIDGE/control/responses" "$BRIDGE/bin/cowork-imessage-helper"
+ls -la "$BRIDGE/control/requests" "$BRIDGE/control/responses"
 ```
 
 If any are missing, the helper isn't installed. Guide the user through installation.
 
 Before the first message operation, call `status`. Require protocol major version
 `1`; if it differs, stop and tell the user to update the helper and skill together.
+If `read_policy.mode` is `allowlist` and `allowlist_entries` is zero, explain that
+reads are intentionally disabled and direct the user to the hardened installer's
+`configure_allowlist.py` command. Never switch policy modes automatically.
 
 **Store the bridge folder path** in your memory/context for the rest of the conversation. You'll use it for all subsequent request/response operations.
 
@@ -384,7 +387,7 @@ done
 
 ## Common Pitfalls
 
-- **FDA not granted yet.** First request returns `sqlite3.OperationalError: unable to open database file` in `control/log.txt`. Tell the user to grant FDA to `<bridge>/bin/cowork-imessage-helper` in System Settings.
+- **FDA not granted yet.** First request returns `sqlite3.OperationalError: unable to open database file` in `control/log.txt`. Tell the user to grant FDA to the exact wrapper path printed by their installer.
 - **Wrapper re-signed.** If the user rebuilt the wrapper, the FDA grant needs to be removed and re-added (macOS identifies the binary by CDHash, not path).
 - **Ambiguous contact name.** `chat: "Alex"` resolves via the first contact whose name contains "Alex"—may not be the intended one. Fall back to phone number if the user has multiple Alexes.
 - **Group chats.** Group chat IDs look like `chat1234567…`. The `review` and `chat_history` actions accept these, but **sending to group chats is NOT supported**. Use individual phone numbers or emails for sending. Attempting to send to a `chatNNNN` identifier will be rejected at the preview stage.
@@ -400,7 +403,9 @@ The helper redacts before writing the response:
 - Credit-card-like digit runs (13–19 digits)
 - US SSN patterns
 
-Chats listed in `contacts/blocked_chats.txt` are dropped entirely—their text never enters the response JSON, which means it never enters your context window. Users should add therapist / attorney / financial advisor threads here.
+The active read policy is applied before response JSON is written. The hardened
+default returns only root-allowlisted chats; the blocklist always removes listed
+threads. Treat redaction as a second line of defense.
 
 **Known redaction gaps** (see `docs/PROTOCOL.md` for full list):
 - Dot-separated credit cards
@@ -410,7 +415,7 @@ Chats listed in `contacts/blocked_chats.txt` are dropped entirely—their text n
 - Home addresses
 - Dates of birth
 
-The blocklist is the reliable filter; redaction is a second line of defense.
+The read policy is the reliable filter; redaction is a second line of defense.
 
 ---
 

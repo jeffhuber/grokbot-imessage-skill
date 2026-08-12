@@ -22,12 +22,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py
+      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py tools/configure_allowlist.py
       - run: python -m unittest discover -s tests -v
       - run: bash -n install.sh
       - run: bash -n install-skill.sh
+      - run: bash -n install-hardened.sh
       - run: bash -n uninstall.sh
-      - run: shellcheck install.sh install-skill.sh uninstall.sh
+      - run: bash -n uninstall-hardened.sh
+      - run: shellcheck install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh
       - run: python tools/check_version.py v1.1.0
 
   macos:
@@ -42,6 +44,9 @@ jobs:
         run: >-
           clang -Wall -Wextra -Werror -O2
           -DHELPER_SCRIPT='"/tmp/helper.py"'
+          -DSEND_GATE_SCRIPT='"/tmp/send_gate.py"'
+          -DCONFIRM_HELPER='"/tmp/confirm-imessage-send"'
+          -DBRIDGE_ROOT='"/tmp/imessage-bridge"'
           -DPYTHON_INTERPRETER='"/usr/bin/python3"'
           -fsyntax-only bin/cowork_imessage_helper.c
       - name: Compile native confirmation helper

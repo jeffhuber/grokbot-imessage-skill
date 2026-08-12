@@ -29,27 +29,32 @@ The AI host runs in a sandboxed environment (Linux for Cowork, potentially remot
 
 ## Bridge Folder Layout
 
-After installation, the bridge folder contains:
+In a standard installation, the bridge folder contains both code and runtime
+state. A hardened installation keeps `bin/` under a root-owned code root and the
+remaining directories under the user-owned bridge root:
 
 ```
+<code-root>/
+└── bin/
+    ├── cowork-imessage-helper       # Compiled C wrapper (FDA target)
+    ├── confirm-imessage-send        # Native, fail-safe send confirmation
+    ├── helper.py                     # Python worker
+    └── send_gate.py                  # Send nonce validation
+
 <bridge-folder>/
-├── bin/
-│   ├── cowork-imessage-helper      # Compiled C wrapper (FDA target)
-│   ├── confirm-imessage-send       # Native, fail-safe send confirmation
-│   ├── helper.py                    # Python worker (reads chat.db, calls osascript)
-│   └── send_gate.py                 # Nonce validation for sends
 ├── control/
-│   ├── requests/                    # AI host writes here
-│   ├── responses/                   # Helper writes here
-│   └── log.txt                      # Helper stderr + logging
+│   ├── requests/                     # AI host writes here
+│   ├── responses/                    # Helper writes here
+│   └── log.txt                       # Helper diagnostics
 ├── contacts/
-│   └── blocked_chats.txt            # User-maintained blocklist
-├── nonces/                          # Short-lived send-preview nonces
-├── install.sh
-├── install-skill.sh
-├── uninstall.sh
-└── com.user.cowork-imessage.plist.template
+│   ├── blocked_chats.txt             # User-maintained blocklist
+│   ├── allowed_chats.txt             # Standard-mode optional allowlist
+│   └── read_policy.txt                # blocklist or allowlist
+└── nonces/                            # Short-lived send-preview nonces
 ```
+
+For a standard install, `<code-root>` and `<bridge-folder>` are the same path.
+Hardened allowlist entries live separately in a root-owned config directory.
 
 ## Request Format
 
@@ -98,9 +103,9 @@ On error:
 {"id": "abc123", "action": "status", "params": {}}
 ```
 
-The response includes `helper_version`, `protocol_version`, `install_root`,
-`python_version`, and local boolean checks for the database, request directories,
-and native confirmation helper.
+The response includes `helper_version`, `protocol_version`, `code_root`,
+`bridge_root`, `python_version`, policy metadata, and local boolean checks for
+the database, request directories, and native confirmation helper.
 
 ---
 
@@ -456,11 +461,11 @@ Redacted content is replaced with `[REDACTED-2FA]`, `[REDACTED-CARD]`, or `[REDA
 - Home addresses
 - Dates of birth
 
-The thread-level blocklist (see below) is the reliable filter; redaction is a second line of defense.
+The thread-level read policy (see below) is the reliable filter; redaction is a second line of defense.
 
 ---
 
-## Blocklist
+## Read Policy
 
 `contacts/blocked_chats.txt` is checked **before** the redactor runs. Threads on the blocklist are dropped entirely—their text never enters the response JSON.
 
@@ -484,6 +489,10 @@ chat123456789
 ```
 
 Blocked threads are enforced for **both** inbound (read actions) and outbound (`send` actions).
+
+When policy mode is `allowlist`, reads and contact lookup return only handles in
+the allowlist; the blocklist still takes precedence. Hardened installs enforce
+this mode with a root-owned list managed by `configure_allowlist.py`.
 
 ---
 
@@ -554,7 +563,7 @@ Required to read `~/Library/Messages/chat.db`. The FDA grant is attached to the 
 **Grant location:**
 ```
 System Settings → Privacy & Security → Full Disk Access
-→ Add: <bridge-folder>/bin/cowork-imessage-helper
+→ Add the exact wrapper path printed by the selected installer
 ```
 
 ### Automation → Messages
@@ -601,9 +610,11 @@ System Settings → Privacy & Security → Automation
 | `control/responses/` | Helper writes mode-600 response JSON here. AI host reads and immediately deletes; helper reaps files older than one hour. |
 | `control/log.txt` | Helper stderr + logging. First place to check when debugging. |
 | `contacts/blocked_chats.txt` | User-maintained blocklist of sensitive chats. |
-| `bin/cowork-imessage-helper` | Compiled, ad-hoc signed C wrapper (the FDA target). |
-| `bin/helper.py` | Python worker (reads chat.db, resolves contacts, redacts, drives osascript). |
-| `bin/send_gate.py` | Nonce minting and validation for send-preview/send gate. |
+| `contacts/read_policy.txt` | Standard-mode read policy selector. Hardened mode overrides it. |
+| `contacts/allowed_chats.txt` | Standard-mode optional allowlist. |
+| `<code-root>/bin/cowork-imessage-helper` | Locally signed C wrapper (the FDA target). |
+| `<code-root>/bin/helper.py` | Python worker (reads chat.db, resolves contacts, redacts, drives osascript). |
+| `<code-root>/bin/send_gate.py` | Nonce minting and validation for send-preview/send gate. |
 | `nonces/` | Short-lived per-nonce files bound to previewed sends. TTL-reaped on every helper run. |
 
 ---
@@ -612,7 +623,7 @@ System Settings → Privacy & Security → Automation
 
 - The bridge folder should be mode `700` (user-only access).
 - The helper runs with **Full Disk Access**—a bug or compromise becomes a full-user-file-read primitive.
-- Nonces are single-use and expire after 60s. A process that can write to the bridge folder can still exfiltrate message content by crafting a read request, but it cannot silently send without racing a real user-approved preview.
+- Nonces are single-use and expire after 60s. A process that can write to the bridge can request readable content; hardened mode bounds that content to its root-owned allowlist. It cannot silently send without native user approval.
 - See `SECURITY.md` for full threat-model details.
 
 ---

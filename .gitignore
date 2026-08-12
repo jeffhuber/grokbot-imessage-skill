@@ -17,6 +17,8 @@ nonces/
 
 # User-specific privacy configuration
 contacts/blocked_chats.txt
+contacts/allowed_chats.txt
+contacts/read_policy.txt
 
 # Editor scratch
 *.swp
