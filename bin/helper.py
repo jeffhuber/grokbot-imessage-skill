@@ -207,7 +207,7 @@ def decode_attributed_body(blob: bytes | None) -> str:
         return _attributed_fail(data, f"length {length} exceeds data at p={p}")
 
     try:
-        return data[p : p + length].decode("utf-8", errors="replace")
+        return data[p : p + length].decode("utf-8")
     except Exception as e:
         return _attributed_fail(data, f"utf-8 decode failed: {e}")
 

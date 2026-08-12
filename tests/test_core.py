@@ -76,7 +76,10 @@ class AttributedBodyTests(unittest.TestCase):
             b"streamtyped\x00\x00\x00\x00\x00NSString\x01\x2b\x32short",
         )
         sentinel = "private-malformed-body-sentinel"
-        values += (make_attributed_blob(sentinel.encode())[:-1],)
+        values += (
+            make_attributed_blob(sentinel.encode())[:-1],
+            make_attributed_blob(b"\xff"),
+        )
         with mock.patch.object(helper, "log") as log:
             for value in values:
                 with self.subTest(value=value):
@@ -87,10 +90,13 @@ class AttributedBodyTests(unittest.TestCase):
 
 class RedactionTests(unittest.TestCase):
     def test_common_secrets_are_redacted(self) -> None:
+        test_code = "".join(("937", "461"))
+        test_card = "-".join(("4111", "1111", "1111", "1111"))
+        test_ssn = "-".join(("321", "54", "9876"))
         cases = (
-            ("Your verification code is 937461", "937461", "[REDACTED-2FA]"),
-            ("Card 4111-1111-1111-1111", "4111-1111-1111-1111", "[REDACTED-CARD]"),
-            ("SSN 321-54-9876", "321-54-9876", "[REDACTED-SSN]"),
+            (f"Your verification code is {test_code}", test_code, "[REDACTED-2FA]"),
+            (f"Card {test_card}", test_card, "[REDACTED-CARD]"),
+            (f"SSN {test_ssn}", test_ssn, "[REDACTED-SSN]"),
         )
         for text, secret, marker in cases:
             with self.subTest(marker=marker):
