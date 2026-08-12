@@ -102,6 +102,10 @@ done
 
 ## Test 4: Grok Bot Integration (Read)
 
+Before reading messages, run `grok inspect` and confirm `imessage-grok-bot` is
+listed. Then issue a `status` request and confirm `protocol_version` begins with
+`1` and the installation checks are true.
+
 **Ask Grok Bot to triage recent messages:**
 
 "Triage my iMessages from the last day."

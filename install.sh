@@ -12,6 +12,7 @@
 #   6. Fills in the launchd plist template and installs it under
 #      ~/Library/LaunchAgents/com.user.cowork-imessage.plist, then bootstraps it.
 #   7. Prints exact next-steps: grant Full Disk Access to the wrapper binary.
+#   8. Installs SKILL.md under Grok's user-level skill discovery directory.
 #
 # Safe to re-run. It will not clobber grants or overwrite user files.
 
@@ -62,6 +63,11 @@ for cmd in clang codesign launchctl python3; do
     fi
 done
 
+if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
+    red "Python 3.9 or newer is required. Found: $(python3 --version 2>&1)"
+    exit 1
+fi
+
 if [[ ! -f "$WRAPPER_SRC" ]]; then
     red "Missing $WRAPPER_SRC"
     exit 1
@@ -76,6 +82,10 @@ if [[ ! -f "$CONFIRM_SRC" ]]; then
 fi
 if [[ ! -f "$PLIST_TEMPLATE" ]]; then
     red "Missing $PLIST_TEMPLATE"
+    exit 1
+fi
+if [[ ! -f "$INSTALL_ROOT/SKILL.md" || ! -x "$INSTALL_ROOT/install-skill.sh" ]]; then
+    red "Missing SKILL.md or executable install-skill.sh"
     exit 1
 fi
 
@@ -184,6 +194,8 @@ launchctl bootstrap "gui/$UID" "$PLIST_DEST"
 launchctl enable "gui/$UID/$LAUNCHCTL_LABEL"
 green "  launchd agent bootstrapped ($LAUNCHCTL_LABEL)"
 
+"$INSTALL_ROOT/install-skill.sh"
+
 # ---- 7. finish ------------------------------------------------------------
 echo
 bold "Install complete."
@@ -208,4 +220,5 @@ echo "    System Settings -> Privacy & Security -> Automation"
 echo "  (This is a separate permission from Full Disk Access.)"
 echo
 echo "Logs: $CONTROL_DIR/log.txt"
+echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT"
 echo "Uninstall: ./uninstall.sh"
