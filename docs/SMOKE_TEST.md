@@ -173,7 +173,8 @@ tail -n 50 "$BRIDGE/control/log.txt"
 ```
 
 **Expected:**
-- Log lines showing request processing and responses.
+- The log may be empty on a healthy run, or may contain timestamped
+  diagnostics such as `contacts: loaded ...`.
 - No repeated errors or stack traces.
 
 **If you see errors:**

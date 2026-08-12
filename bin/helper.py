@@ -538,7 +538,7 @@ def validate_search(v: Any) -> str:
 
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-_PHONE_RE = re.compile(r"^[+0-9().\-\s]+$")
+_PHONE_RE = re.compile(r"^[+0-9().\- ]+$")
 
 
 def validate_chat(v: Any) -> str:
@@ -564,7 +564,7 @@ def validate_send_recipient(v: Any) -> str:
         return identifier.strip().lower()
 
     digits = re.sub(r"\D", "", identifier)
-    if len(digits) >= 10 and _PHONE_RE.match(identifier):
+    if len(digits) >= 10 and _PHONE_RE.fullmatch(identifier):
         return identifier.strip()
 
     raise ValueError("send recipient must be a valid phone number or email address")

@@ -125,12 +125,7 @@ This is the primary trust boundary you need to understand.
     `send_preview` that shows up in Grok Bot's UI, or race the 60-second
     window after a real one.)**
 
-This is the central limitation of the current design on the **read**
-path: a process running as your user can exfiltrate message content.
-An HMAC-authenticated envelope that binds request files to a
-The nonce protocol (added in v0.4.0) prevents silent misuse of the bridge folder; adversarial processes cannot send without replicating a real user-approved preview inside its 60-second window.
-malicious supply-chain packages running as your user, do not install
-this plugin in its current form.
+This is the central limitation of the current design on the **read** path: a process running as your user can exfiltrate message content. The nonce protocol and native confirmation dialog reduce send-path misuse, but they do not authenticate read requests. If your threat model includes malicious supply-chain packages running as your user, do not install this plugin in its current form.
 
 ## Confirmation gate (sending)
 
@@ -163,11 +158,7 @@ This two-layer gate is enforced **helper-side**. A process that writes
 directly to the bridge folder and issues a `send` with no nonce, a forged
 nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
 seconds), or a nonce whose bound payload differs from the `send` request's
-`(to, text, service)` is rejected before the dialog appears. Nonces are
-stored as per-file records under `~/imessage-bridge/nonces/` (mode 500),
-are single-use (deleted on consume), and are also deleted on any
-validation failure so the same nonce cannot be retried with a corrected
-payload.
+`(to, text, service)` is rejected before the dialog appears. Nonces are stored as per-file records under `<bridge-folder>/nonces/`; the nonce directory is mode `700` and nonce files are mode `600`. Nonces are single-use (deleted on consume) and are also deleted on validation failure so the same nonce cannot be retried with a corrected payload.
 
 An attacker who can write to the bridge folder would need to:
 1. Race a real, user-approved preview inside its 60-second window *and*
