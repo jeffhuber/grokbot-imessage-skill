@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Build artifacts (per-machine — users build locally via install.sh)
+bin/cowork-imessage-helper
+*.plugin
+
+# Runtime state (created by install.sh or helper)
+control/
+nonces/
+
+# User-specific contacts blocklist (preserve if present)
+# contacts/blocked_chats.txt  # Uncomment to ignore user's blocklist
+
+# Editor scratch
+*.swp
+.idea/
+.vscode/
