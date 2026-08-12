@@ -18,12 +18,22 @@ This repository provides a **Grok Bot skill** that lets Grok Bot interact with y
 
 ## Requirements
 
-- **macOS** (tested on Ventura 13.0+, should work on Monterey 12.0+)
+- **macOS 13 or newer**
 - **Xcode Command Line Tools** (for building the helper wrapper)
-- **Python 3** (ships with macOS)
-- **Grok Bot** with support for macOS ExternalShell skills
+- **Python 3.9 or newer** (`/usr/bin/python3` from Xcode Command Line Tools works)
+- **Grok Build CLI** for automatic skill discovery, or another Grok Bot host
+  capable of writing the documented request files
 - **Full Disk Access** permission (to read `~/Library/Messages/chat.db`)
 - **Automation → Messages** permission (to send messages via AppleScript)
+
+### Compatibility
+
+| Component | Supported and verified | Notes |
+|-----------|------------------------|-------|
+| macOS | 13+; CI on `macos-latest`; manual check on macOS 26.5, Apple silicon | Messages database and AppleScript are private/legacy integration surfaces and may change in future macOS releases. |
+| Python | 3.9, 3.11, and 3.13 in CI | The installer requires 3.9+. |
+| CPU | Apple silicon | The installer compiles from source locally; Intel is expected to build but is not currently exercised in CI. |
+| Grok | Grok Build user skills with `grok inspect` | The helper protocol is independently versioned and reports `1.1`; other hosts can use the bridge directly. |
 
 ---
 
@@ -51,7 +61,8 @@ The helper needs a persistent directory to watch for requests from Grok Bot. You
 
 ```bash
 mkdir ~/imessage-bridge
-cp -r bin/ install.sh uninstall.sh com.user.cowork-imessage.plist.template ~/imessage-bridge/
+cp -r bin/ tools/ SKILL.md install.sh install-skill.sh uninstall.sh \
+  com.user.cowork-imessage.plist.template ~/imessage-bridge/
 cd ~/imessage-bridge
 ./install.sh
 ```
@@ -62,6 +73,20 @@ The installer will:
 - Ad-hoc code-sign the wrapper (for a stable FDA grant)
 - Set up the launchd agent to watch for request files
 - Create `control/requests/`, `control/responses/`, and `contacts/` directories
+- Install the skill under `${GROK_HOME:-~/.grok}/skills/imessage-grok-bot/`
+- Verify discovery with `grok inspect` when the Grok CLI is available
+
+That path is Grok Build's documented user-level skill directory. If your Grok
+host already loads `SKILL.md` through a workflow bridge, install only the local
+helper and skip the copy:
+
+```bash
+INSTALL_GROK_SKILL=0 ./install.sh
+```
+
+You can run `./install-skill.sh` later. See xAI's
+[skills documentation](https://docs.x.ai/build/features/skills-plugins-marketplaces)
+for the currently supported discovery paths.
 
 ### 3. Grant Full Disk Access
 
@@ -97,7 +122,9 @@ Once installed, ask Grok Bot things like:
 - **Response Time:** "How fast do I reply to Alex on average?"
 - **Send (preview-first):** "Text +1-555-123-4567: 'On my way!'"
 
-Grok Bot uses the skill automatically when you ask iMessage-related questions.
+Grok Build uses the skill automatically when you ask iMessage-related questions.
+Run `grok inspect` to confirm `imessage-grok-bot` appears in the discovered
+skills. Skip this check when another host injects `SKILL.md` directly.
 
 ---
 
@@ -186,6 +213,7 @@ Quick reference:
 | `contacts_lookup` | Find matching contacts by name |
 | `send_preview` | Dry-run validation (returns a single-use nonce) |
 | `send` | Actually send (requires the nonce from `send_preview` + native macOS dialog confirmation) |
+| `status` | Report helper/protocol versions and installation checks without reading messages |
 
 ---
 
@@ -223,6 +251,13 @@ If a response appears with `"ok": true` or `"ok": false`, the helper is working.
 
 Response files are mode `600`. Clients must delete them immediately after parsing; the helper also removes abandoned responses after one hour. Logs never include message bodies or raw `attributedBody` bytes and rotate at 1 MiB with three backups.
 
+Message reads use SQLite's [online backup API](https://sqlite.org/backup.html)
+to create a consistent temporary snapshot, including committed rows still in
+Messages' live WAL. The source is opened read-only without `immutable=1`:
+SQLite [defines that flag](https://sqlite.org/uri.html#uriimmutable) as an
+assertion that a database cannot change, which is not true while Messages is
+running.
+
 ---
 
 ## Limitations
@@ -236,6 +271,13 @@ Response files are mode `600`. Clients must delete them immediately after parsin
 ---
 
 ## Troubleshooting
+
+Run the non-destructive setup diagnostic first. Add `--skip-grok` when you
+intentionally skipped the Grok Build skill copy:
+
+```bash
+python3 tools/doctor.py --bridge "/path/to/your/bridge-folder"
+```
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -260,6 +302,22 @@ This removes the launchd agent. To fully remove:
 - Open **System Settings → Privacy & Security → Full Disk Access** and revoke `cowork-imessage-helper`.
 - (Optional) Open **System Settings → Privacy & Security → Automation** and toggle off or remove `cowork-imessage-helper → Messages`.
 
+The uninstaller also removes the user-level `imessage-grok-bot` skill installed under Grok's discovery directory.
+
+## Upgrading
+
+Pull or unpack the new source, review `CHANGELOG.md`, then rerun `./install.sh`
+from the bridge folder. The installer rebuilds and re-signs the native binaries,
+restarts the LaunchAgent, and refreshes the discovered skill. Recheck Full Disk
+Access if macOS no longer recognizes the rebuilt wrapper, then run:
+
+```bash
+python3 tools/doctor.py --bridge "$PWD"
+```
+
+Tagged releases include `SHA256SUMS`; verify an archive with
+`shasum -a 256 -c SHA256SUMS` before installation.
+
 ---
 
 ## Related Projects
@@ -275,6 +333,8 @@ PRs welcome! If you find a bug or want to add a feature:
 1. Open an issue first to discuss the change.
 2. Submit a PR with tests under `tests/`.
 3. Follow the existing code style (Python 3.9+, type hints where helpful).
+4. Run `python3 -m unittest discover -s tests -v`, `bash -n` on the shell
+   scripts, and the native compile checks from `.github/workflows/ci.yml`.
 
 **Security issues:** Email <jhuber+grokbotimessage@gmail.com> instead of opening a public issue. See **[SECURITY.md](./SECURITY.md)** for details.
 

@@ -215,11 +215,10 @@ rotate at 1 MiB with three backups.
 
 ## The chat.db copy
 
-SQLite locks `chat.db` while Messages.app has it open, so the helper
-copies it to a per-request tempfile under the user's cache directory,
-reads the copy, and deletes it at the end of the request. The copy is
-mode-600 and is cleaned up on normal exit; an abnormal exit (OOM,
-SIGKILL) can leave a stale copy behind.
+The helper uses SQLite's online backup API to create a consistent per-request
+snapshot while Messages may still be writing to `chat.db`. It reads the
+mode-600 snapshot and deletes it at the end of the request. An abnormal exit
+(OOM or SIGKILL) can leave a stale copy behind.
 
 `send` actions do NOT copy `chat.db` — a `needs_db` flag on each
 request handler short-circuits the copy for write-only operations.
@@ -260,9 +259,9 @@ You can verify what's actually on your disk:
   approximately nothing — it exists to stabilize the CDHash. You can
   rebuild it yourself; the README documents the one-line `clang` command
   used by `install.sh`.
-- Verify the repository contents match what's on GitHub. Each
-  GitHub release is tagged; the source is small enough to diff against
-  a local clone.
+- Verify the repository contents match a tagged GitHub release. Release source
+  archives include a `SHA256SUMS` file, and the source is small enough to diff
+  against a local clone.
 - After install, verify the LaunchAgent plist under
   `~/Library/LaunchAgents/com.user.cowork-imessage.plist` points only
   at the wrapper in the bridge folder and carries no other arguments.
