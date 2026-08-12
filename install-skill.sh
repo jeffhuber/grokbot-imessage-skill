@@ -20,12 +20,19 @@ chmod 600 "$SKILL_DEST/SKILL.md"
 echo "Installed Grok skill: $SKILL_DEST/SKILL.md"
 if command -v grok >/dev/null 2>&1; then
     echo "Verifying Grok discovery with: grok inspect"
-    if ! grok inspect 2>&1 | grep -q "imessage-grok-bot"; then
+    inspect_output=""
+    inspect_status=0
+    inspect_output="$(grok inspect 2>&1)" || inspect_status=$?
+    if [[ "$inspect_status" -eq 0 ]] && grep -q "imessage-grok-bot" <<<"$inspect_output"; then
+        echo "Grok discovered imessage-grok-bot."
+    else
         echo "Warning: grok inspect did not report imessage-grok-bot." >&2
-        echo "Open Grok and run /skills, or inspect $SKILL_DEST." >&2
-        exit 1
+        if [[ "$inspect_status" -ne 0 ]]; then
+            echo "grok inspect exited with status $inspect_status." >&2
+        fi
+        echo "Reload Grok and run /skills, or inspect $SKILL_DEST." >&2
+        echo "The skill file was installed; discovery can lag until Grok reloads." >&2
     fi
-    echo "Grok discovered imessage-grok-bot."
 else
     echo "Grok CLI not found; run 'grok inspect' after installing Grok."
 fi

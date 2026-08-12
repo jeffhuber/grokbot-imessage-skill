@@ -11,8 +11,8 @@
 #      to attach to. Re-signing on content-identical rebuilds keeps the grant.
 #   6. Fills in the launchd plist template and installs it under
 #      ~/Library/LaunchAgents/com.user.cowork-imessage.plist, then bootstraps it.
-#   7. Prints exact next-steps: grant Full Disk Access to the wrapper binary.
-#   8. Installs SKILL.md under Grok's user-level skill discovery directory.
+#   7. Optionally installs SKILL.md under Grok's user-level skill directory.
+#   8. Prints exact next-steps: grant Full Disk Access to the wrapper binary.
 #
 # Safe to re-run. It will not clobber grants or overwrite user files.
 
@@ -38,11 +38,17 @@ CONFIRM_BIN="$BIN_DIR/confirm-imessage-send"
 PLIST_TEMPLATE="$INSTALL_ROOT/com.user.cowork-imessage.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.user.cowork-imessage.plist"
 LAUNCHCTL_LABEL="com.user.cowork-imessage"
+INSTALL_GROK_SKILL="${INSTALL_GROK_SKILL:-1}"
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
 red() { printf "\033[31m%s\033[0m\n" "$*" 1>&2; }
+
+if [[ "$INSTALL_GROK_SKILL" != "0" && "$INSTALL_GROK_SKILL" != "1" ]]; then
+    red "INSTALL_GROK_SKILL must be 0 or 1."
+    exit 1
+fi
 
 # ---- 1. sanity checks ----------------------------------------------------
 if [[ "$(uname)" != "Darwin" ]]; then
@@ -84,7 +90,8 @@ if [[ ! -f "$PLIST_TEMPLATE" ]]; then
     red "Missing $PLIST_TEMPLATE"
     exit 1
 fi
-if [[ ! -f "$INSTALL_ROOT/SKILL.md" || ! -x "$INSTALL_ROOT/install-skill.sh" ]]; then
+if [[ "$INSTALL_GROK_SKILL" == "1" && \
+      (! -f "$INSTALL_ROOT/SKILL.md" || ! -x "$INSTALL_ROOT/install-skill.sh") ]]; then
     red "Missing SKILL.md or executable install-skill.sh"
     exit 1
 fi
@@ -194,7 +201,11 @@ launchctl bootstrap "gui/$UID" "$PLIST_DEST"
 launchctl enable "gui/$UID/$LAUNCHCTL_LABEL"
 green "  launchd agent bootstrapped ($LAUNCHCTL_LABEL)"
 
-"$INSTALL_ROOT/install-skill.sh"
+if [[ "$INSTALL_GROK_SKILL" == "1" ]]; then
+    "$INSTALL_ROOT/install-skill.sh"
+else
+    yellow "  skipped Grok Build skill copy (INSTALL_GROK_SKILL=0)"
+fi
 
 # ---- 7. finish ------------------------------------------------------------
 echo
@@ -220,5 +231,9 @@ echo "    System Settings -> Privacy & Security -> Automation"
 echo "  (This is a separate permission from Full Disk Access.)"
 echo
 echo "Logs: $CONTROL_DIR/log.txt"
-echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT"
+if [[ "$INSTALL_GROK_SKILL" == "1" ]]; then
+    echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT"
+else
+    echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT --skip-grok"
+fi
 echo "Uninstall: ./uninstall.sh"

@@ -21,7 +21,8 @@ This repository provides a **Grok Bot skill** that lets Grok Bot interact with y
 - **macOS 13 or newer**
 - **Xcode Command Line Tools** (for building the helper wrapper)
 - **Python 3.9 or newer** (`/usr/bin/python3` from Xcode Command Line Tools works)
-- **Grok Bot** with support for macOS ExternalShell skills
+- **Grok Build CLI** for automatic skill discovery, or another Grok Bot host
+  capable of writing the documented request files
 - **Full Disk Access** permission (to read `~/Library/Messages/chat.db`)
 - **Automation → Messages** permission (to send messages via AppleScript)
 
@@ -32,7 +33,7 @@ This repository provides a **Grok Bot skill** that lets Grok Bot interact with y
 | macOS | 13+; CI on `macos-latest`; manual check on macOS 26.5, Apple silicon | Messages database and AppleScript are private/legacy integration surfaces and may change in future macOS releases. |
 | Python | 3.9, 3.11, and 3.13 in CI | The installer requires 3.9+. |
 | CPU | Apple silicon | The installer compiles from source locally; Intel is expected to build but is not currently exercised in CI. |
-| Grok | ExternalShell skill discovery with `grok inspect` | The helper protocol is independently versioned and reports `1.1`. |
+| Grok | Grok Build user skills with `grok inspect` | The helper protocol is independently versioned and reports `1.1`; other hosts can use the bridge directly. |
 
 ---
 
@@ -75,6 +76,18 @@ The installer will:
 - Install the skill under `${GROK_HOME:-~/.grok}/skills/imessage-grok-bot/`
 - Verify discovery with `grok inspect` when the Grok CLI is available
 
+That path is Grok Build's documented user-level skill directory. If your Grok
+host already loads `SKILL.md` through a workflow bridge, install only the local
+helper and skip the copy:
+
+```bash
+INSTALL_GROK_SKILL=0 ./install.sh
+```
+
+You can run `./install-skill.sh` later. See xAI's
+[skills documentation](https://docs.x.ai/build/features/skills-plugins-marketplaces)
+for the currently supported discovery paths.
+
 ### 3. Grant Full Disk Access
 
 Open **System Settings → Privacy & Security → Full Disk Access**, click the `+` button, press **Cmd-Shift-G**, and paste the path printed by the installer:
@@ -109,8 +122,9 @@ Once installed, ask Grok Bot things like:
 - **Response Time:** "How fast do I reply to Alex on average?"
 - **Send (preview-first):** "Text +1-555-123-4567: 'On my way!'"
 
-Grok Bot uses the skill automatically when you ask iMessage-related questions.
-Run `grok inspect` to confirm `imessage-grok-bot` appears in the discovered skills.
+Grok Build uses the skill automatically when you ask iMessage-related questions.
+Run `grok inspect` to confirm `imessage-grok-bot` appears in the discovered
+skills. Skip this check when another host injects `SKILL.md` directly.
 
 ---
 
@@ -237,6 +251,13 @@ If a response appears with `"ok": true` or `"ok": false`, the helper is working.
 
 Response files are mode `600`. Clients must delete them immediately after parsing; the helper also removes abandoned responses after one hour. Logs never include message bodies or raw `attributedBody` bytes and rotate at 1 MiB with three backups.
 
+Message reads use SQLite's [online backup API](https://sqlite.org/backup.html)
+to create a consistent temporary snapshot, including committed rows still in
+Messages' live WAL. The source is opened read-only without `immutable=1`:
+SQLite [defines that flag](https://sqlite.org/uri.html#uriimmutable) as an
+assertion that a database cannot change, which is not true while Messages is
+running.
+
 ---
 
 ## Limitations
@@ -251,7 +272,8 @@ Response files are mode `600`. Clients must delete them immediately after parsin
 
 ## Troubleshooting
 
-Run the non-destructive setup diagnostic first:
+Run the non-destructive setup diagnostic first. Add `--skip-grok` when you
+intentionally skipped the Grok Build skill copy:
 
 ```bash
 python3 tools/doctor.py --bridge "/path/to/your/bridge-folder"

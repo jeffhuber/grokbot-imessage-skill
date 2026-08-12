@@ -30,6 +30,30 @@ class SQLiteBackupTests(unittest.TestCase):
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone(), ("ok",))
             self.assertFalse(Path(str(snapshot) + "-wal").exists())
 
+    def test_copy_chatdb_includes_uncheckpointed_wal_rows(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-wal-test-") as td:
+            source = Path(td) / "chat.db"
+            with sqlite3.connect(str(source)) as writer:
+                self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+                writer.execute("PRAGMA wal_autocheckpoint=0")
+                writer.execute("CREATE TABLE sample(value TEXT)")
+                writer.commit()
+                writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                writer.execute("INSERT INTO sample VALUES ('from-live-wal')")
+                writer.commit()
+                self.assertGreater(Path(f"{source}-wal").stat().st_size, 0)
+
+                with mock.patch.object(helper, "CHAT_DB_PATH", source):
+                    snapshot = helper.copy_chatdb()
+                self.addCleanup(helper.cleanup_tmpdb, snapshot)
+
+            with sqlite3.connect(str(snapshot)) as conn:
+                self.assertEqual(
+                    conn.execute("SELECT value FROM sample").fetchall(),
+                    [("from-live-wal",)],
+                )
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone(), ("ok",))
+
 
 class StatusContractTests(unittest.TestCase):
     def test_status_is_whitelisted_and_does_not_need_chat_db(self) -> None:
@@ -149,6 +173,38 @@ class SkillInstallTests(unittest.TestCase):
         self.assertIn('GROK_SKILLS_ROOT="${GROK_HOME:-$HOME/.grok}/skills"', script)
         self.assertIn('SKILL_DEST="$GROK_SKILLS_ROOT/imessage-grok-bot"', script)
         self.assertIn("grok inspect", script)
+
+    def test_skill_discovery_warning_is_nonfatal(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-skill-test-") as td:
+            root = Path(td)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            grok = fake_bin / "grok"
+            grok.write_text("#!/bin/sh\necho 'no matching skills'\n")
+            grok.chmod(0o755)
+            env = os.environ.copy()
+            env["GROK_HOME"] = str(root / "grok-home")
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+
+            result = subprocess.run(
+                ["bash", str(REPO_ROOT / "install-skill.sh")],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("did not report imessage-grok-bot", result.stderr)
+            self.assertTrue(
+                (root / "grok-home" / "skills" / "imessage-grok-bot" / "SKILL.md").is_file()
+            )
+
+    def test_main_installer_supports_skipping_skill_copy(self) -> None:
+        script = (REPO_ROOT / "install.sh").read_text()
+        self.assertIn('INSTALL_GROK_SKILL="${INSTALL_GROK_SKILL:-1}"', script)
+        self.assertIn('if [[ "$INSTALL_GROK_SKILL" == "1" ]]', script)
+        self.assertIn("--skip-grok", script)
 
     def test_protocol_version_is_documented(self) -> None:
         protocol = (REPO_ROOT / "docs" / "PROTOCOL.md").read_text()

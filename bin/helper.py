@@ -711,7 +711,10 @@ def copy_chatdb() -> Path:
     source = None
     destination = None
     try:
-        source_uri = f"{CHAT_DB_PATH.resolve().as_uri()}?mode=ro"
+        # chat.db is live and may contain uncheckpointed WAL rows. Do not use
+        # immutable=1 here: it asserts the file cannot change and disables
+        # locking/change detection. The online backup API supplies the snapshot.
+        source_uri = f"{CHAT_DB_PATH.resolve().as_uri()}?mode=ro&cache=private"
         source = sqlite3.connect(source_uri, uri=True, timeout=5)
         destination = sqlite3.connect(str(snapshot))
         source.backup(destination)
