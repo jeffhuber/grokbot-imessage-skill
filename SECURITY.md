@@ -71,6 +71,15 @@ to require UID 0 ownership for all loaded code. Runtime queues remain
 user-owned. This prevents an ordinary same-user process from replacing trusted
 code, although administrator/root compromise remains out of scope.
 
+The FDA-bearing Python process opens the bridge path component-by-component
+with `O_NOFOLLOW`, then performs request, response, log, and nonce operations
+relative to verified directory descriptors. The bridge and runtime directories
+must be owned by the current user with no group/world permissions. Existing
+unsafe objects are rejected rather than chmodded. Request and nonce files must
+be regular, current-user-owned files; request payloads are capped at 64 KiB.
+The LaunchAgent sends process stdout/stderr to `/dev/null`, leaving structured
+helper diagnostics to the same descriptor-relative internal logger.
+
 ### Automation → Messages (v0.3.0+)
 
 Required to send. The first send triggers a one-time macOS prompt:
@@ -214,6 +223,11 @@ response immediately after parsing it, and the helper reaps abandoned responses
 after one hour. Response files and `control/log.txt` are mode `600`; parser logs
 record only failure metadata and byte counts, never raw message bytes. Logs
 rotate at 1 MiB with three backups.
+
+Runtime paths are deliberately fail-closed. A symlink, FIFO, device, wrong
+owner, or permissive directory causes that operation to be rejected; the helper
+does not follow or repair the object. Run `tools/doctor.py` and rerun the chosen
+installer to restore an expected directory layout.
 
 ## The chat.db copy
 

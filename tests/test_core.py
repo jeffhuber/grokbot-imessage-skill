@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import struct
 import tempfile
 import time
@@ -114,7 +115,7 @@ class SendGateTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-nonce-test-")
         self.addCleanup(self._tmp.cleanup)
         self._old_bridge = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
@@ -144,6 +145,7 @@ class SendGateTests(unittest.TestCase):
         claimed = nonce_dir / "stale.claimed"
         for path in (fresh, stale, claimed):
             path.write_text("{")
+            path.chmod(0o600)
         old = time.time() - helper.SEND_NONCE_TTL - 10
         os.utime(stale, (old, old))
         os.utime(claimed, (old, old))
@@ -153,6 +155,18 @@ class SendGateTests(unittest.TestCase):
         self.assertTrue(fresh.exists())
         self.assertFalse(stale.exists())
         self.assertFalse(claimed.exists())
+
+    def test_nonce_store_rejects_symlinked_directory(self) -> None:
+        bridge = Path(os.path.realpath(self._tmp.name))
+        victim = bridge / "victim-dir"
+        victim.mkdir(mode=0o755)
+        (bridge / "nonces").symlink_to(victim, target_is_directory=True)
+
+        with self.assertRaises(RuntimeError):
+            helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+
+        self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+        self.assertEqual(list(victim.iterdir()), [])
 
 
 if __name__ == "__main__":

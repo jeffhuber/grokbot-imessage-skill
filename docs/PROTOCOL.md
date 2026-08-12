@@ -69,6 +69,9 @@ All requests are JSON files with this structure:
 ```
 
 Use a UUID or timestamp for `id`. The `id` must be unique within the bridge folder's lifetime.
+The top-level JSON value and `params` must be objects, and `action` must be a
+string. Request files are limited to 64 KiB. Invalid requests receive an error
+response and do not prevent later queued requests from being processed.
 
 ## Response Format
 
@@ -608,7 +611,7 @@ System Settings → Privacy & Security → Automation
 |------|------|
 | `control/requests/` | AI host writes request JSON here. Watched by launchd. |
 | `control/responses/` | Helper writes mode-600 response JSON here. AI host reads and immediately deletes; helper reaps files older than one hour. |
-| `control/log.txt` | Helper stderr + logging. First place to check when debugging. |
+| `control/log.txt` | Internal helper diagnostics. Launchd stdout/stderr go to `/dev/null` so they cannot follow a user-controlled log symlink. |
 | `contacts/blocked_chats.txt` | User-maintained blocklist of sensitive chats. |
 | `contacts/read_policy.txt` | Standard-mode read policy selector. Hardened mode overrides it. |
 | `contacts/allowed_chats.txt` | Standard-mode optional allowlist. |
@@ -622,6 +625,10 @@ System Settings → Privacy & Security → Automation
 ## Security Notes
 
 - The bridge folder should be mode `700` (user-only access).
+- Bridge runtime directories must be real, current-user-owned directories with
+  no group/world permissions. The helper rejects symlinks and unsafe modes; it
+  does not chmod existing objects.
+- Requests must be current-user-owned regular files no larger than 64 KiB.
 - The helper runs with **Full Disk Access**—a bug or compromise becomes a full-user-file-read primitive.
 - Nonces are single-use and expire after 60s. A process that can write to the bridge can request readable content; hardened mode bounds that content to its root-owned allowlist. It cannot silently send without native user approval.
 - See `SECURITY.md` for full threat-model details.

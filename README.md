@@ -285,6 +285,12 @@ If a response appears with `"ok": true` or `"ok": false`, the helper is working.
 
 Response files are mode `600`. Clients must delete them immediately after parsing; the helper also removes abandoned responses after one hour. Logs never include message bodies or raw `attributedBody` bytes and rotate at 1 MiB with three backups.
 
+The helper opens the bridge and its runtime directories through anchored,
+no-follow directory descriptors. It rejects symlinks, non-user-owned objects,
+and group/world-accessible runtime directories instead of changing their
+permissions. Request files must be regular files owned by the current user and
+are limited to 64 KiB. Rerun the installer if `doctor.py` reports unsafe modes.
+
 Message reads use SQLite's [online backup API](https://sqlite.org/backup.html)
 to create a consistent temporary snapshot, including committed rows still in
 Messages' live WAL. The source is opened read-only without `immutable=1`:
@@ -320,6 +326,7 @@ python3 tools/doctor.py --bridge "/path/to/your/bridge-folder"
 | Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
 | `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
 | Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt` for unparseable blobs |
+| `UnsafeRuntimePath` or `unsafe bridge root` | A bridge path is a symlink, has the wrong owner, or is not private | Remove the unsafe object or rerun the installer; do not chmod an unexplained target |
 
 Check `<bridge>/control/log.txt` first when debugging.
 

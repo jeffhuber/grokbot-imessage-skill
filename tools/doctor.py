@@ -22,6 +22,16 @@ def mode(path: pathlib.Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+def has_symlink_component(path: pathlib.Path) -> bool:
+    absolute = pathlib.Path(os.path.abspath(path.expanduser()))
+    current = pathlib.Path(absolute.anchor)
+    for component in absolute.parts[1:]:
+        current /= component
+        if current.is_symlink():
+            return True
+    return False
+
+
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
@@ -33,10 +43,16 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
     expected_code_uid = 0 if hardened else os.getuid()
     checks: dict[str, dict[str, str]] = {}
 
-    bridge_ok = bridge.is_dir() and not bridge.is_symlink() and mode(bridge) & 0o077 == 0
+    bridge_ok = (
+        bridge.is_dir()
+        and not has_symlink_component(bridge)
+        and bridge.stat().st_uid == os.getuid()
+        and mode(bridge) & 0o077 == 0
+    )
     checks["bridge_root"] = check(
         "pass" if bridge_ok else "fail",
-        f"{bridge} mode={oct(mode(bridge)) if bridge.exists() else 'missing'}",
+        f"{bridge} uid={bridge.stat().st_uid if bridge.exists() else 'missing'} "
+        f"mode={oct(mode(bridge)) if bridge.exists() else 'missing'}",
     )
 
     code_ok = (
@@ -57,7 +73,11 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
         "contacts_dir": bridge / "contacts",
     }
     for name, path in directory_modes.items():
-        ok = path.is_dir() and not path.is_symlink() and mode(path) & 0o077 == 0
+        ok = (
+            path.is_dir()
+            and not has_symlink_component(path)
+            and mode(path) & 0o077 == 0
+        )
         checks[name] = check("pass" if ok else "fail", f"{path} mode={oct(mode(path)) if path.exists() else 'missing'}")
 
     executable_files = {

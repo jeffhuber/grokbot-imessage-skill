@@ -21,13 +21,18 @@ import os
 import pathlib
 import re
 import secrets
+import stat
 import time
+from contextlib import contextmanager
 
 
 SEND_NONCE_TTL = 60  # seconds
 
 # URL-safe base64 alphabet used by secrets.token_urlsafe
 _NONCE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_FILE_NOFOLLOW_FLAGS = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+_MAX_NONCE_RECORD_BYTES = 4096
 
 
 class SendGateError(Exception):
@@ -37,15 +42,100 @@ class SendGateError(Exception):
 def _bridge_dir() -> pathlib.Path:
     override = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
     if override:
-        return pathlib.Path(override)
-    return pathlib.Path.home() / "cowork-imessage"
+        return pathlib.Path(os.path.abspath(os.path.expanduser(override)))
+    return pathlib.Path(os.path.abspath(pathlib.Path.home() / "cowork-imessage"))
 
 
-def _nonce_dir() -> pathlib.Path:
-    d = _bridge_dir() / "nonces"
-    d.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(d, 0o700)
-    return d
+def _validate_private_directory(fd: int, label: str) -> None:
+    metadata = os.fstat(fd)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(f"{label} is not a directory")
+    if metadata.st_uid != os.getuid():
+        raise RuntimeError(f"{label} is not owned by the current user")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise RuntimeError(f"{label} must not have group/world permissions")
+
+
+def _open_bridge_root() -> int:
+    root = _bridge_dir()
+    if not root.is_absolute() or root == pathlib.Path("/"):
+        raise RuntimeError("bridge root must be a non-root absolute path")
+    fd = os.open("/", _DIR_OPEN_FLAGS)
+    try:
+        for component in root.parts[1:]:
+            next_fd = os.open(component, _DIR_OPEN_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        _validate_private_directory(fd, f"bridge root {root}")
+        return fd
+    except RuntimeError:
+        os.close(fd)
+        raise
+    except OSError as exc:
+        os.close(fd)
+        raise RuntimeError(f"unsafe bridge root {root}: {exc}") from exc
+
+
+@contextmanager
+def _nonce_dir_fd():
+    fd = _open_bridge_root()
+    try:
+        try:
+            os.mkdir("nonces", mode=0o700, dir_fd=fd)
+        except FileExistsError:
+            pass
+        try:
+            nonce_fd = os.open("nonces", _DIR_OPEN_FLAGS, dir_fd=fd)
+        except OSError as exc:
+            raise RuntimeError(f"unsafe nonce directory: {exc}") from exc
+        os.close(fd)
+        fd = nonce_fd
+        _validate_private_directory(fd, "nonce directory")
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _validate_nonce_file(fd: int, label: str) -> None:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise RuntimeError(f"{label} is not a regular file")
+    if metadata.st_uid != os.getuid():
+        raise RuntimeError(f"{label} is not owned by the current user")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise RuntimeError(f"{label} must not have group/world permissions")
+    if metadata.st_size > _MAX_NONCE_RECORD_BYTES:
+        raise RuntimeError(f"{label} is too large")
+
+
+def _read_nonce_record(directory_fd: int, name: str) -> dict:
+    fd = os.open(name, os.O_RDONLY | _FILE_NOFOLLOW_FLAGS, dir_fd=directory_fd)
+    try:
+        _validate_nonce_file(fd, name)
+        chunks = []
+        remaining = _MAX_NONCE_RECORD_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, min(remaining, 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > _MAX_NONCE_RECORD_BYTES:
+            raise RuntimeError(f"{name} is too large")
+        record = json.loads(raw.decode("utf-8"))
+        if not isinstance(record, dict):
+            raise RuntimeError(f"{name} must contain a JSON object")
+        return record
+    finally:
+        os.close(fd)
+
+
+def _unlink_at(directory_fd: int, name: str) -> None:
+    try:
+        os.unlink(name, dir_fd=directory_fd)
+    except FileNotFoundError:
+        pass
 
 
 def _preview_hash(to: str, body: str, service: str) -> str:
@@ -68,14 +158,25 @@ def mint_send_nonce(to: str, body: str, service: str) -> str:
         "preview_hash": _preview_hash(to, body, service),
         "expires_at": int(time.time()) + SEND_NONCE_TTL,
     }
-    nonce_dir = _nonce_dir()
-    path = nonce_dir / f"{nonce}.json"
-    tmp = nonce_dir / f".{nonce}.json.tmp"
-    # Write to temp file first, then rename atomically into place.
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as f:
-        json.dump(record, f)
-    os.rename(tmp, path)
+    name = f"{nonce}.json"
+    tmp = f".{nonce}.json.tmp"
+    with _nonce_dir_fd() as nonce_fd:
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _FILE_NOFOLLOW_FLAGS,
+            0o600,
+            dir_fd=nonce_fd,
+        )
+        try:
+            _validate_nonce_file(fd, tmp)
+            with os.fdopen(fd, "w") as f:
+                fd = -1
+                json.dump(record, f)
+            os.replace(tmp, name, src_dir_fd=nonce_fd, dst_dir_fd=nonce_fd)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            _unlink_at(nonce_fd, tmp)
     return nonce
 
 
@@ -90,40 +191,40 @@ def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
         # Defense-in-depth against path-traversal via a crafted nonce.
         raise SendGateError("invalid nonce format")
 
-    path = _nonce_dir() / f"{nonce}.json"
-    claimed_path = _nonce_dir() / f"{nonce}.claimed"
+    name = f"{nonce}.json"
+    claimed = f"{nonce}.claimed"
+    with _nonce_dir_fd() as nonce_fd:
+        # Atomically claim the nonce file to prevent concurrent consumption.
+        try:
+            os.rename(name, claimed, src_dir_fd=nonce_fd, dst_dir_fd=nonce_fd)
+        except FileNotFoundError:
+            raise SendGateError(
+                "nonce not recognized; send_preview must precede send"
+            )
+        except Exception as e:
+            raise SendGateError(f"failed to claim nonce: {e}")
 
-    # Atomically claim the nonce file to prevent concurrent consumption.
-    try:
-        path.rename(claimed_path)
-    except FileNotFoundError:
-        raise SendGateError(
-            "nonce not recognized; send_preview must precede send"
-        )
-    except Exception as e:
-        raise SendGateError(f"failed to claim nonce: {e}")
+        # Now validate the claimed nonce (only one process got here).
+        try:
+            record = _read_nonce_record(nonce_fd, claimed)
+        except Exception as e:
+            _unlink_at(nonce_fd, claimed)
+            raise SendGateError(f"malformed nonce record: {e}")
 
-    # Now validate the claimed nonce (only one process got here).
-    try:
-        record = json.loads(claimed_path.read_text())
-    except Exception as e:
-        claimed_path.unlink(missing_ok=True)
-        raise SendGateError(f"malformed nonce record: {e}")
+        if int(time.time()) > record.get("expires_at", 0):
+            _unlink_at(nonce_fd, claimed)
+            raise SendGateError(
+                f"nonce expired (TTL {SEND_NONCE_TTL}s); call send_preview again"
+            )
 
-    if int(time.time()) > record.get("expires_at", 0):
-        claimed_path.unlink(missing_ok=True)
-        raise SendGateError(
-            f"nonce expired (TTL {SEND_NONCE_TTL}s); call send_preview again"
-        )
+        if _preview_hash(to, body, service) != record.get("preview_hash"):
+            _unlink_at(nonce_fd, claimed)
+            raise SendGateError(
+                "send payload differs from preview; re-preview required"
+            )
 
-    if _preview_hash(to, body, service) != record.get("preview_hash"):
-        claimed_path.unlink(missing_ok=True)
-        raise SendGateError(
-            "send payload differs from preview; re-preview required"
-        )
-
-    # One-shot: delete on success so the nonce can't be replayed.
-    claimed_path.unlink(missing_ok=True)
+        # One-shot: delete on success so the nonce can't be replayed.
+        _unlink_at(nonce_fd, claimed)
 
 
 def reap_expired_nonces() -> None:
@@ -134,36 +235,32 @@ def reap_expired_nonces() -> None:
     mid-write records. Also cleans up orphaned .claimed files."""
     now = int(time.time())
     grace_period = 5  # seconds; avoid reaping files being written right now
-    nonce_dir = _nonce_dir()
-
-    # Reap normal .json nonce files.
-    for p in nonce_dir.glob("*.json"):
-        # Skip temp files and claimed files (they're transient).
-        if p.name.startswith(".") or p.suffix == ".tmp" or ".claimed" in p.name:
-            continue
-        try:
-            # Check file mtime; if very fresh, skip it (may be mid-write).
-            stat = p.stat()
-            if now - stat.st_mtime < grace_period:
+    with _nonce_dir_fd() as nonce_fd:
+        for name in os.listdir(nonce_fd):
+            if name.startswith("."):
                 continue
-            record = json.loads(p.read_text())
-            if now > record.get("expires_at", 0):
-                p.unlink(missing_ok=True)
-        except Exception:
-            # Malformed or racing; only delete if not brand-new.
+            if not (name.endswith(".json") or name.endswith(".claimed")):
+                continue
             try:
-                stat = p.stat()
-                if now - stat.st_mtime > grace_period:
-                    p.unlink(missing_ok=True)
+                metadata = os.stat(name, dir_fd=nonce_fd, follow_symlinks=False)
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+                    continue
+                if stat.S_IMODE(metadata.st_mode) & 0o077:
+                    continue
+                age = now - metadata.st_mtime
+                if name.endswith(".claimed"):
+                    if age > SEND_NONCE_TTL:
+                        _unlink_at(nonce_fd, name)
+                    continue
+                if age < grace_period:
+                    continue
+                try:
+                    record = _read_nonce_record(nonce_fd, name)
+                    expires_at = record.get("expires_at", 0)
+                    if not isinstance(expires_at, (int, float)) or now > expires_at:
+                        _unlink_at(nonce_fd, name)
+                except Exception:
+                    if age > grace_period:
+                        _unlink_at(nonce_fd, name)
             except Exception:
                 pass
-
-    # Reap orphaned .claimed files (helper died after claiming but before sending).
-    for p in nonce_dir.glob("*.claimed"):
-        try:
-            stat = p.stat()
-            # Delete claimed files older than TTL (they're abandoned).
-            if now - stat.st_mtime > SEND_NONCE_TTL:
-                p.unlink(missing_ok=True)
-        except Exception:
-            pass
