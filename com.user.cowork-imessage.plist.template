@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.user.cowork-imessage launchd agent.
+
+  Fires when a file is added/modified inside control/requests/. The helper
+  binary scans that directory and processes every pending request, so launchd
+  coalescing multiple events into one run is harmless.
+
+  This template is filled in by install.sh — {{INSTALL_ROOT}} is replaced
+  with the absolute install directory before being copied to
+  ~/Library/LaunchAgents/.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.user.cowork-imessage</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{INSTALL_ROOT}}/bin/cowork-imessage-helper</string>
+  </array>
+
+  <key>WatchPaths</key>
+  <array>
+    <string>{{INSTALL_ROOT}}/control/requests</string>
+  </array>
+
+  <key>ThrottleInterval</key>
+  <integer>1</integer>
+
+  <key>StandardOutPath</key>
+  <string>{{INSTALL_ROOT}}/control/log.txt</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{INSTALL_ROOT}}/control/log.txt</string>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

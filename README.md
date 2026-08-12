@@ -1,2 +1,272 @@
-# grokbot-imessage-skill
-macOS iMessage skill for Grok Bot — local launchd helper bridge to read, triage, search, and send iMessages
+# Grok Bot iMessage Skill for macOS
+
+> **Read, search, triage, and send iMessages** from Grok Bot via a local macOS helper bridge.
+
+This repository provides a **Grok Bot skill** that lets Grok Bot interact with your iMessages on macOS. It uses a lightweight, privacy-first launchd helper to read your local Messages database and send messages via AppleScript—no cloud sync, no third-party services.
+
+---
+
+## What This Does
+
+- **Read & Triage:** "Review my messages from the last 2 days" → Grok Bot reads your iMessages, categorizes threads by urgency, and surfaces what needs a reply.
+- **Search:** "Find all messages mentioning 'dinner plans' in the last month" → Full-text search across your message history.
+- **Chat History:** "Pull my conversation with Alex from the last week" → Retrieves a specific thread's recent messages.
+- **Response Stats:** "What's my average reply time to Angel over the last 24 hours?" → Computes timing statistics.
+- **Send (with preview-and-confirm):** "Text +1-555-123-4567: 'Running 10 minutes late'" → Grok Bot previews the message, you approve, then it sends via AppleScript.
+
+---
+
+## Requirements
+
+- **macOS** (tested on Ventura 13.0+, should work on Monterey 12.0+)
+- **Xcode Command Line Tools** (for building the helper wrapper)
+- **Python 3** (ships with macOS)
+- **Grok Bot** with support for macOS ExternalShell skills
+- **Full Disk Access** permission (to read `~/Library/Messages/chat.db`)
+- **Automation → Messages** permission (to send messages via AppleScript)
+
+---
+
+## Installation (5–10 minutes)
+
+### 1. Clone this repository
+
+```bash
+git clone https://github.com/jeffhuber/grokbot-imessage-skill.git
+cd grokbot-imessage-skill
+```
+
+### 2. Choose a bridge folder
+
+The helper needs a persistent directory to watch for requests from Grok Bot. You can use this repo's directory, or create a dedicated folder like `~/imessage-bridge`.
+
+**Example using this repo:**
+
+```bash
+# Already in the repo directory
+./install.sh
+```
+
+**Or create a dedicated bridge folder:**
+
+```bash
+mkdir ~/imessage-bridge
+cp -r bin/ install.sh uninstall.sh com.user.cowork-imessage.plist.template ~/imessage-bridge/
+cd ~/imessage-bridge
+./install.sh
+```
+
+The installer will:
+- Compile the C wrapper with your install path baked in
+- Ad-hoc code-sign the wrapper (for a stable FDA grant)
+- Set up the launchd agent to watch for request files
+- Create `control/requests/`, `control/responses/`, and `contacts/` directories
+
+### 3. Grant Full Disk Access
+
+Open **System Settings → Privacy & Security → Full Disk Access**, click the `+` button, press **Cmd-Shift-G**, and paste the path printed by the installer:
+
+```
+/path/to/your/bridge-folder/bin/cowork-imessage-helper
+```
+
+Select it, make sure the toggle is **ON**.
+
+### 4. (Optional) Grant Automation permission for sending
+
+The first time you ask Grok Bot to send a message, macOS will prompt: *"cowork-imessage-helper wants to control Messages."* Click **OK**.
+
+You can verify the grant later under **System Settings → Privacy & Security → Automation → cowork-imessage-helper → Messages**.
+
+### 5. Tell Grok Bot where your bridge folder is
+
+When you first use an iMessage command, Grok Bot will ask: *"Where did you install the iMessage helper?"*
+
+Provide the full path (e.g., `~/imessage-bridge` or the path to this repo). Grok Bot will remember it for the rest of the conversation.
+
+---
+
+## Usage
+
+Once installed, ask Grok Bot things like:
+
+- **Triage:** "Review my iMessages from the last day."
+- **Search:** "Find messages about 'project deadline' in the last 2 weeks."
+- **Chat History:** "Show my conversation with Angel from the last 3 days."
+- **Response Time:** "How fast do I reply to Alex on average?"
+- **Send (preview-first):** "Text +1-555-123-4567: 'On my way!'"
+
+Grok Bot uses the skill automatically when you ask iMessage-related questions.
+
+---
+
+## Privacy & Security
+
+### What This Helper Can Do
+
+- **Read your entire Messages database** (`~/Library/Messages/chat.db`) — Full Disk Access is the coarsest macOS permission; the code only reads `chat.db`, but a bug or compromise becomes a full-user-file-read primitive.
+- **Send iMessages/SMS** on your behalf via AppleScript (only after you approve the preview).
+
+### What Leaves Your Mac
+
+- **Message content** passes through Grok Bot's normal pipeline, which means it reaches xAI's servers as part of the conversation.
+- **The helper itself does not make any outbound network connections.** All processing happens on-device.
+
+### Third-Party Privacy
+
+**Messages are two-sided.** Every message this helper reads was sent to or from someone else, and they never consented to have their words processed by an LLM. If you use this skill, you're making that choice on their behalf. This is an intrinsic property of giving an AI assistant access to your messages—mentioned here because it's a legitimate concern the README shouldn't bury.
+
+### Blocklist
+
+Add sensitive threads to `contacts/blocked_chats.txt` (therapist, attorney, family, etc.). Blocked threads are **dropped before the response JSON is written**, so their text never enters Grok Bot's context.
+
+Format:
+```
+# One entry per line. Lines starting with # are ignored.
++15551234567
+lawyer@example.com
+chat123456789
+```
+
+Phone numbers match by last 10 digits. Emails and group IDs match case-insensitively.
+
+### Send Gate (Preview-and-Confirm)
+
+Sending is gated at the **helper level** (v0.4.0+):
+
+1. Grok Bot issues a `send_preview` → the helper returns the normalized payload and a **single-use send nonce** bound to that exact `(to, text, service)` triple.
+2. Grok Bot shows you the preview; you approve.
+3. Grok Bot issues a `send` with the nonce → the helper verifies the nonce matches the payload, then calls `osascript` to send.
+
+Nonces expire after 60 seconds, are single-use, and are deleted on any validation failure. A process that can write to the bridge folder cannot silently send without racing a real, user-approved preview.
+
+See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
+
+---
+
+## Architecture
+
+```
+  Grok Bot (your context)             macOS (your local machine)
+  -----------------------             -------------------------
+  Writes request-<id>.json  -->  launchd watches control/requests/  -->
+  Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
+                                 helper.py (FDA-granted, reads
+                                 chat.db + AddressBook, drives osascript)
+```
+
+Grok Bot runs in an environment that can execute shell commands on your Mac. The helper is a launchd agent that watches a **bridge folder** for JSON request files. When Grok Bot writes a request, launchd fires the helper, which reads the Messages database, processes the request, and writes a JSON response back—where Grok Bot can then read it.
+
+Sending uses the **same** request/response bridge. Grok Bot writes a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI automation, no clicks—just a short-lived subprocess.
+
+---
+
+## Protocol
+
+Full JSON protocol documentation: **[docs/PROTOCOL.md](./docs/PROTOCOL.md)**
+
+Quick reference:
+
+| Action | What It Does |
+|--------|--------------|
+| `review` | Triage recent messages into needs-reply / low-priority / skip buckets |
+| `search` | Full-text substring search across all threads |
+| `chat_history` | Recent messages in one thread (by name, phone, email, or group ID) |
+| `response_stats` | Avg/median/min/max reply times to one contact |
+| `contacts_lookup` | Find matching contacts by name |
+| `send_preview` | Dry-run validation (returns a single-use nonce) |
+| `send` | Actually send (requires the nonce from `send_preview`) |
+
+---
+
+## Smoke Test
+
+After installation, verify everything works: **[docs/SMOKE_TEST.md](./docs/SMOKE_TEST.md)**
+
+Quick sanity check:
+
+```bash
+BRIDGE="/path/to/your/bridge-folder"  # e.g., ~/imessage-bridge
+REQ_ID=$(date +%s)
+cat > "$BRIDGE/control/requests/request-$REQ_ID.json" <<EOF
+{"id": "$REQ_ID", "action": "contacts_lookup", "params": {"name": "test"}}
+EOF
+
+# Poll for response (should appear within 2-5 seconds)
+for i in {1..20}; do
+  if [[ -f "$BRIDGE/control/responses/response-$REQ_ID.json" ]]; then
+    cat "$BRIDGE/control/responses/response-$REQ_ID.json"
+    break
+  fi
+  sleep 0.5
+done
+```
+
+If a response appears with `"ok": true` or `"ok": false`, the helper is working. Check `$BRIDGE/control/log.txt` for errors if not.
+
+---
+
+## Limitations
+
+- **Text only.** No attachments, images, stickers, audio, Tapback reactions, message effects, or message editing/deletion.
+- **No group-chat creation.** Can send *to* an existing group chat ID, but not create one.
+- **Local `chat.db` only.** If a thread hasn't synced to this Mac, it won't appear.
+- **macOS-specific.** Relies on direct `chat.db` access and AppleScript control of Messages.app—both Apple surfaces that could be deprecated in a future macOS release.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| No response files appear | FDA not granted | Grant FDA to `<bridge>/bin/cowork-imessage-helper` in System Settings |
+| `sqlite3.OperationalError` in logs | FDA not granted or stale | Re-add the wrapper in System Settings → Full Disk Access |
+| Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
+| `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
+| Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt` for unparseable blobs |
+
+Check `<bridge>/control/log.txt` first when debugging.
+
+---
+
+## Uninstalling
+
+```bash
+./uninstall.sh
+```
+
+This removes the launchd agent. To fully remove:
+- Delete the bridge folder.
+- Open **System Settings → Privacy & Security → Full Disk Access** and revoke `cowork-imessage-helper`.
+- (Optional) Open **System Settings → Privacy & Security → Automation** and toggle off or remove `cowork-imessage-helper → Messages`.
+
+---
+
+## Related Projects
+
+**Looking for Claude Cowork?** The sibling integration for Claude Cowork lives at [github.com/jeffhuber/claudecowork-imessage-skill](https://github.com/jeffhuber/claudecowork-imessage-skill). Same helper, different host adapter.
+
+---
+
+## Contributing
+
+PRs welcome! If you find a bug or want to add a feature:
+
+1. Open an issue first to discuss the change.
+2. Submit a PR with tests (see `tests/` in the sibling repo for examples).
+3. Follow the existing code style (Python 3.9+, type hints where helpful).
+
+**Security issues:** Email <jhuber+grokbotimessage@gmail.com> instead of opening a public issue. See **[SECURITY.md](./SECURITY.md)** for details.
+
+---
+
+## License
+
+MIT. See **[LICENSE](./LICENSE)** for full text.
+
+---
+
+## Acknowledgments
+
+- Protocol design and helper implementation adapted from the [claudecowork-imessage-skill](https://github.com/jeffhuber/claudecowork-imessage-skill) project.
+- Inspired by the need for local, privacy-first AI assistant integrations on macOS.
