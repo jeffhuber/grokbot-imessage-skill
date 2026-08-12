@@ -19,7 +19,7 @@ install the helper.
   preview-and-confirm step.
 
 Both paths go through a single on-device helper process: a Python
-script (`helper.py`) launched by an ad-hoc-signed C wrapper via a
+script (`helper.py`) launched by a locally signed C wrapper via a
 user-scoped `launchd` LaunchAgent. The C wrapper exists solely to give
 the helper a stable `CDHash`, which is what macOS TCC uses to identify
 the process holding Full Disk Access.
@@ -46,18 +46,16 @@ Messages leak. Treat that as the blast radius.
 
 ### The CDHash pins the wrapper, not the Python
 
-The TCC grant for Full Disk Access is bound to the C wrapper's
-CDHash. That stabilizes the grant across OS updates that would
-otherwise re-hash `/usr/bin/python3`, but it does not extend any
-authentication to `helper.py` itself. The wrapper's one and only job
-is to `exec` `helper.py`, and `helper.py` lives in the user-writable
-bridge folder (e.g., `~/imessage-bridge/bin/helper.py`, mode 500 but owned
-by you).
+The TCC grant is bound to the wrapper's CDHash. The wrapper therefore validates
+every project file it loads before `exec`: `helper.py`, `send_gate.py`, and the
+native confirmation helper must be regular files, have the expected owner, and
+not be group/world writable. It rejects symlinks. The confirmation helper must
+also be executable.
 
-That means any process running as your user with write access to the
-bridge folder can overwrite `helper.py` with its own Python, and the
-very next `launchd` trigger will run that replacement under the
-wrapper's CDHash and inherit FDA. A tampered `helper.py` would:
+The **standard installer** keeps code in the user-owned bridge. A same-user
+process can replace a file with another file that still has the expected user
+owner and permissions, so this mode remains vulnerable to code replacement. A
+tampered helper could:
 
 - Bypass the v0.4.0 helper-side send gate — a replacement simply
   wouldn't check nonces.
@@ -67,19 +65,11 @@ wrapper's CDHash and inherit FDA. A tampered `helper.py` would:
   otherwise), because authentication is enforced by the helper, and
   the helper has been replaced.
 
-This is the same threat class covered by the "malicious supply-chain
-packages running as your user" caveat below — a process that can
-write into your `$HOME` can compromise the plugin by replacing
-`helper.py`, full stop. The helper-side gates are defense in depth
-against accidents and unsophisticated attackers; they are not a
-barrier against an attacker with user-UID write access to the bridge
-folder.
-
-A stricter posture — installing `helper.py` to a root-owned path
-like `/usr/local/libexec/cowork-imessage/helper.py` via `sudo` in
-`install.sh` — is a plausible future mitigation but is not currently
-shipped. Until then, treat the bridge folder as part of the trusted
-compute base: if something can write there, it owns the helper.
+The **hardened installer** puts code under root-owned
+`/Library/Application Support/GrokBotIMessage/users/<uid>/libexec` and compiles the wrapper
+to require UID 0 ownership for all loaded code. Runtime queues remain
+user-owned. This prevents an ordinary same-user process from replacing trusted
+code, although administrator/root compromise remains out of scope.
 
 ### Automation → Messages (v0.3.0+)
 
@@ -117,14 +107,18 @@ This is the primary trust boundary you need to understand.
 - Any unsandboxed process running as your user. If you run a malicious
   `npm install`, `pip install`, `brew install`, or anything else that
   executes as your UID, that process can:
-  - Write a read request into the bridge folder and receive message
-    contents in response.
+  - Write a read request into the bridge folder. In standard mode it can receive
+    any non-blocked content; hardened mode limits results to the root-owned
+    allowlist.
   - Issue a `send_preview` request, read its nonce, and issue the matching
     `send` request. This can reach the native confirmation dialog, but it
     cannot silently send: the user must still review the displayed
     recipient and message and click **Send**.
 
-This is the central limitation of the current design on the **read** path: a process running as your user can exfiltrate message content. The nonce protocol and native confirmation dialog reduce send-path misuse, but they do not authenticate read requests. If your threat model includes malicious supply-chain packages running as your user, do not install this plugin in its current form.
+Read requests are not tied to an interactive user session. Hardened mode narrows
+the maximum disclosure to explicitly allowlisted chats, but any same-user process
+can request and consume data from those chats. Do not allowlist conversations
+whose disclosure to another local process would be unacceptable.
 
 ## Confirmation gate (sending)
 
@@ -175,17 +169,24 @@ in v1.0.0. Existing helpers from the sibling `claudecowork-imessage-skill`
 repository (v0.4.0 and earlier) do not show the dialog. Users who upgrade
 to this helper will experience the added confirmation step.
 
-## Blocklist
+## Read policy
 
 `contacts/blocked_chats.txt` is checked by the helper before any read
 or send involving a listed identifier. The list is editable by the
 user and is honored for both inbound (search/review) and outbound
 (send) as of v0.3.0.
 
-The blocklist is best-effort. It is not a privacy boundary — anyone
+The standard-mode blocklist is best-effort. It is not a privacy boundary — anyone
 who can edit the file can also remove entries, and the helper trusts
 the list verbatim. Use it to prevent accidental exposure, not as a
 security control.
+
+Hardened mode bakes `allowlist` into the wrapper and validates a root-owned,
+mode-600 allowlist under the same root-owned per-UID product tree.
+The user receives read-only ACL access; changes go through `sudo` via
+`configure_allowlist.py`. A missing, symlinked, writable, or non-root-owned file
+causes the wrapper/helper to fail closed. The user-editable blocklist still takes
+precedence.
 
 ## What leaves the machine
 
@@ -198,7 +199,8 @@ passes through xAI's normal pipeline, which means it reaches
 xAI's servers as part of the conversation, subject to
 xAI's standard data-handling terms. If you don't want a specific
 conversation touched, add the identifier to the blocklist or don't
-invoke the skill on that range.
+invoke the skill on that range. Hardened users should allow only the minimum set
+of conversations needed.
 
 The plugin does **not**:
 

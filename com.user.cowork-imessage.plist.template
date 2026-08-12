@@ -7,9 +7,8 @@
   binary scans that directory and processes every pending request, so launchd
   coalescing multiple events into one run is harmless.
 
-  This template is filled in by install.sh — {{INSTALL_ROOT}} is replaced
-  with the absolute install directory before being copied to
-  ~/Library/LaunchAgents/.
+  This template is filled in by an installer. {{CODE_ROOT}} is the trusted
+  executable tree; {{BRIDGE_ROOT}} is the user-owned request/response tree.
 -->
 <plist version="1.0">
 <dict>
@@ -18,22 +17,22 @@
 
   <key>ProgramArguments</key>
   <array>
-    <string>{{INSTALL_ROOT}}/bin/cowork-imessage-helper</string>
+    <string>{{CODE_ROOT}}/bin/cowork-imessage-helper</string>
   </array>
 
   <key>WatchPaths</key>
   <array>
-    <string>{{INSTALL_ROOT}}/control/requests</string>
+    <string>{{BRIDGE_ROOT}}/control/requests</string>
   </array>
 
   <key>ThrottleInterval</key>
   <integer>1</integer>
 
   <key>StandardOutPath</key>
-  <string>{{INSTALL_ROOT}}/control/log.txt</string>
+  <string>{{BRIDGE_ROOT}}/control/log.txt</string>
 
   <key>StandardErrorPath</key>
-  <string>{{INSTALL_ROOT}}/control/log.txt</string>
+  <string>{{BRIDGE_ROOT}}/control/log.txt</string>
 
   <key>RunAtLoad</key>
   <false/>

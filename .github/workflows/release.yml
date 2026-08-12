@@ -17,12 +17,15 @@ jobs:
         run: python3 tools/check_version.py "$GITHUB_REF_NAME"
       - name: Run release checks
         run: |
-          python3 -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py
+          python3 -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py tools/configure_allowlist.py
           python3 -m unittest discover -s tests -v
-          bash -n install.sh install-skill.sh uninstall.sh
+          bash -n install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh
           plutil -lint com.user.cowork-imessage.plist.template
           clang -Wall -Wextra -Werror -O2 \
             -DHELPER_SCRIPT='"/tmp/helper.py"' \
+            -DSEND_GATE_SCRIPT='"/tmp/send_gate.py"' \
+            -DCONFIRM_HELPER='"/tmp/confirm-imessage-send"' \
+            -DBRIDGE_ROOT='"/tmp/imessage-bridge"' \
             -DPYTHON_INTERPRETER='"/usr/bin/python3"' \
             -fsyntax-only bin/cowork_imessage_helper.c
           clang -Wall -Wextra -Werror -fobjc-arc \

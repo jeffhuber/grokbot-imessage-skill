@@ -142,6 +142,12 @@ class DoctorTests(unittest.TestCase):
             blocklist = bridge / "contacts" / "blocked_chats.txt"
             blocklist.write_text("")
             blocklist.chmod(0o600)
+            allowlist = bridge / "contacts" / "allowed_chats.txt"
+            allowlist.write_text("")
+            allowlist.chmod(0o600)
+            read_policy = bridge / "contacts" / "read_policy.txt"
+            read_policy.write_text("blocklist\n")
+            read_policy.chmod(0o600)
             log = bridge / "control" / "log.txt"
             log.write_text("")
             log.chmod(0o600)

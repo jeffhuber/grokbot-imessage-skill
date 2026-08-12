@@ -44,6 +44,7 @@ def _bridge_dir() -> pathlib.Path:
 def _nonce_dir() -> pathlib.Path:
     d = _bridge_dir() / "nonces"
     d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(d, 0o700)
     return d
 
 
