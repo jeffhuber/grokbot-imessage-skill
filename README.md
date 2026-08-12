@@ -2,7 +2,7 @@
 
 > **Read, search, triage, and send iMessages** from Grok Bot via a local macOS helper bridge.
 
-This repository provides a **Grok Bot skill** that lets Grok Bot interact with your iMessages on macOS. It uses a lightweight, privacy-first launchd helper to read your local Messages database and send messages via AppleScript—no cloud sync, no third-party services.
+This repository provides a **Grok Bot skill** that lets Grok Bot interact with your iMessages on macOS. A local launchd helper reads your Messages database and sends via AppleScript. The helper makes no network requests, but message content selected for Grok is processed through xAI's normal service pipeline.
 
 ---
 
@@ -58,6 +58,7 @@ cd ~/imessage-bridge
 
 The installer will:
 - Compile the C wrapper with your install path baked in
+- Compile a native, scrollable send-confirmation window
 - Ad-hoc code-sign the wrapper (for a stable FDA grant)
 - Set up the launchd agent to watch for request files
 - Create `control/requests/`, `control/responses/`, and `contacts/` directories
@@ -110,7 +111,7 @@ Grok Bot uses the skill automatically when you ask iMessage-related questions.
 ### What Leaves Your Mac
 
 - **Message content** passes through Grok Bot's normal pipeline, which means it reaches xAI's servers as part of the conversation.
-- **The helper itself does not make any outbound network connections.** All processing happens on-device.
+- **The helper itself does not make any outbound network connections.** Extraction, filtering, and redaction happen on-device; Grok processing happens through xAI's service.
 
 ### Third-Party Privacy
 
@@ -141,10 +142,10 @@ Sending is gated at the **helper level** with two layers of protection:
 
 **2. Native macOS dialog (v1.0.0+):**
    - After nonce validation succeeds, the helper displays a **native macOS system dialog** showing:
-     - Recipient (resolved contact name if available, otherwise phone/email)
+     - Recipient name and exact phone/email address
      - Service (iMessage or SMS)
-     - Truncated message text (first 200 chars)
-   - You must click **Send** to proceed. Clicking **Cancel** or waiting 60 seconds aborts the send.
+     - Full message text in a scrollable, read-only view
+   - **Cancel is the keyboard default.** You must deliberately select **Send** to proceed. Clicking Cancel or waiting 60 seconds aborts the send.
    - This dialog enforces human approval at the macOS level—even a valid nonce requires explicit user confirmation.
 
 Nonces expire after 60 seconds, are single-use, and are deleted on any validation failure. A process that can write to the bridge folder cannot silently send without both: (a) racing a real user-approved preview inside its 60s window, and (b) the user clicking **Send** in the native dialog that appears on their screen.
@@ -160,8 +161,8 @@ See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
   -----------------------             -------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->
   Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
-                                 helper.py (FDA-granted, reads
-                                 chat.db + AddressBook, drives osascript)
+                                 helper.py (FDA-granted, reads chat.db)
+                                 confirm-imessage-send (native approval UI)
 ```
 
 Grok Bot runs in an environment that can execute shell commands on your Mac. The helper is a launchd agent that watches a **bridge folder** for JSON request files. When Grok Bot writes a request, launchd fires the helper, which reads the Messages database, processes the request, and writes a JSON response back—where Grok Bot can then read it.
@@ -209,7 +210,9 @@ mv "$TMP" "$FINAL"
 # Poll for response (should appear within 2-5 seconds)
 for i in {1..20}; do
   if [[ -f "$BRIDGE/control/responses/response-$REQ_ID.json" ]]; then
-    cat "$BRIDGE/control/responses/response-$REQ_ID.json"
+    RESPONSE="$BRIDGE/control/responses/response-$REQ_ID.json"
+    cat "$RESPONSE"
+    rm -f "$RESPONSE"  # Responses contain message data; delete after parsing.
     break
   fi
   sleep 0.5
@@ -217,6 +220,8 @@ done
 ```
 
 If a response appears with `"ok": true` or `"ok": false`, the helper is working. Check `$BRIDGE/control/log.txt` for errors if not.
+
+Response files are mode `600`. Clients must delete them immediately after parsing; the helper also removes abandoned responses after one hour. Logs never include message bodies or raw `attributedBody` bytes and rotate at 1 MiB with three backups.
 
 ---
 
@@ -268,7 +273,7 @@ This removes the launchd agent. To fully remove:
 PRs welcome! If you find a bug or want to add a feature:
 
 1. Open an issue first to discuss the change.
-2. Submit a PR with tests (see `tests/` in the sibling repo for examples).
+2. Submit a PR with tests under `tests/`.
 3. Follow the existing code style (Python 3.9+, type hints where helpful).
 
 **Security issues:** Email <jhuber+grokbotimessage@gmail.com> instead of opening a public issue. See **[SECURITY.md](./SECURITY.md)** for details.

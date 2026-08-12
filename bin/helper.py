@@ -47,6 +47,7 @@ REQUESTS_DIR = INSTALL_ROOT / "control" / "requests"
 RESPONSES_DIR = INSTALL_ROOT / "control" / "responses"
 LOG_PATH = INSTALL_ROOT / "control" / "log.txt"
 BLOCKLIST_PATH = INSTALL_ROOT / "contacts" / "blocked_chats.txt"
+CONFIRM_HELPER_PATH = INSTALL_ROOT / "bin" / "confirm-imessage-send"
 
 # ---------------------------------------------------------------------------
 # Sibling module loading
@@ -86,6 +87,9 @@ MAX_LIMIT = 500
 MAX_SEARCH_LEN = 200
 MAX_TEXT_SNIPPET = 600
 MAX_CONTEXT_MESSAGES = 8
+RESPONSE_TTL_S = 60 * 60
+LOG_MAX_BYTES = 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 # Send-side bounds. iMessage will accept much longer bodies, but capping here
 # limits blast radius if a request is malformed or adversarial. 4000 chars is
@@ -103,10 +107,29 @@ import subprocess  # noqa: E402  — used only by send actions, keep the import 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+def _ensure_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
 def log(msg: str) -> None:
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(LOG_PATH, "a") as f:
+        _ensure_private_directory(LOG_PATH.parent)
+        if LOG_PATH.exists() and LOG_PATH.stat().st_size >= LOG_MAX_BYTES:
+            oldest = LOG_PATH.with_name(f"{LOG_PATH.name}.{LOG_BACKUP_COUNT}")
+            oldest.unlink(missing_ok=True)
+            for index in range(LOG_BACKUP_COUNT - 1, 0, -1):
+                source = LOG_PATH.with_name(f"{LOG_PATH.name}.{index}")
+                if source.exists():
+                    destination = LOG_PATH.with_name(f"{LOG_PATH.name}.{index + 1}")
+                    source.replace(destination)
+                    os.chmod(destination, 0o600)
+            first_archive = LOG_PATH.with_name(f"{LOG_PATH.name}.1")
+            LOG_PATH.replace(first_archive)
+            os.chmod(first_archive, 0o600)
+        fd = os.open(LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(LOG_PATH, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}\n")
     except Exception:
         pass
@@ -117,7 +140,7 @@ def log(msg: str) -> None:
 # Ported from the original Perplexity skill and kept byte-compatible.
 # ---------------------------------------------------------------------------
 def _attributed_fail(data: bytes, reason: str) -> str:
-    log(f"attributedBody parse failed: {reason}; first64={data[:64].hex()}")
+    log(f"attributedBody parse failed: {reason}; bytes={len(data)}")
     return ""
 
 
@@ -184,7 +207,7 @@ def decode_attributed_body(blob: bytes | None) -> str:
         return _attributed_fail(data, f"length {length} exceeds data at p={p}")
 
     try:
-        return data[p : p + length].decode("utf-8", errors="replace")
+        return data[p : p + length].decode("utf-8")
     except Exception as e:
         return _attributed_fail(data, f"utf-8 decode failed: {e}")
 
@@ -633,6 +656,46 @@ def _run_osascript(script: str, timeout: float = OSASCRIPT_TIMEOUT_S
     return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
 
 
+def _run_send_confirmation(
+    *, to: str, resolved_name: str, service: str, text: str
+) -> bool:
+    """Show the full outbound payload in the native confirmation helper.
+
+    Return True only for the helper's explicit Send exit status. Cancel and
+    timeout return False; malformed input or helper failures raise.
+    """
+    payload = json.dumps(
+        {
+            "to": to,
+            "resolved_name": resolved_name,
+            "service": service,
+            "text": text,
+        },
+        ensure_ascii=False,
+    )
+    try:
+        result = subprocess.run(
+            [str(CONFIRM_HELPER_PATH)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=70,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    except OSError as e:
+        raise RuntimeError(f"confirmation helper could not start: {e}") from e
+
+    if result.returncode == 0:
+        return True
+    if result.returncode in (1, 3):
+        return False
+    detail = (result.stderr or result.stdout or "no output").strip()
+    raise RuntimeError(
+        f"confirmation helper failed (rc={result.returncode}): {detail}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # DB handling
 # ---------------------------------------------------------------------------
@@ -1051,29 +1114,17 @@ def action_send(params, conn, contacts, blocklist):
     # by some process writing directly into control/requests/.
     consume_send_nonce(params.get("send_nonce"), to, text, service)
 
-    # v1.0.0+: native macOS confirmation dialog. After nonce validation
-    # succeeds, require explicit human approval via a native dialog before
-    # AppleScript sends. This prevents any process that can write to the
-    # bridge from silently sending — even with a valid nonce, the human
-    # must click Send in the system dialog.
+    # Require explicit human approval before AppleScript sends. The native
+    # helper shows both the resolved and raw recipient plus the complete body
+    # in a scrollable view. Cancel is the keyboard default and all unexpected
+    # outcomes fail closed.
     resolved_name = _resolve_contact_name(to, contacts)
-    display_to = resolved_name or to
-    # Truncate message preview to 200 chars for dialog readability.
-    preview_text = (text[:200] + "...") if len(text) > 200 else text
-    preview_text_escaped = _escape_as_string(preview_text)
-
-    dialog_script = (
-        f'display dialog "Send {service} to {_escape_as_string(display_to)}?\\n\\n'
-        f'{preview_text_escaped}" '
-        f'buttons {{"Cancel", "Send"}} default button "Send" '
-        f'with title "Confirm iMessage Send" '
-        f'giving up after 60'
-    )
-    # Dialog timeout is 60s; pass longer subprocess timeout to avoid killing it early.
-    rc, stdout, stderr = _run_osascript(dialog_script, timeout=70)
-    # rc=0 means user clicked Send; rc=1 means Cancel; rc!=0 means timeout or error.
-    # stdout contains the button clicked or "gave up:true" on timeout.
-    if rc != 0 or "Cancel" in stdout or "gave up:true" in stdout:
+    if not _run_send_confirmation(
+        to=to,
+        resolved_name=resolved_name,
+        service=service,
+        text=text,
+    ):
         raise RuntimeError(
             "send cancelled by user or timed out (60s dialog limit)"
         )
@@ -1144,11 +1195,33 @@ def write_response(req_filename_stem: str, data: dict) -> None:
     """Write response JSON atomically. Uses the request filename stem to
     derive the response filename, never trusting JSON id for the path.
     """
-    RESPONSES_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(RESPONSES_DIR)
     path = RESPONSES_DIR / f"response-{req_filename_stem}.json"
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = RESPONSES_DIR / f".{path.name}.{uuid.uuid4().hex}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def reap_expired_responses() -> None:
+    """Remove response payloads that the host failed to consume promptly."""
+    now = time.time()
+    if not RESPONSES_DIR.exists():
+        return
+    for path in RESPONSES_DIR.glob("response-*.json"):
+        try:
+            if now - path.stat().st_mtime > RESPONSE_TTL_S:
+                path.unlink(missing_ok=True)
+        except OSError as e:
+            log(f"response reaper could not remove {path.name}: {e}")
 
 
 def process_request(req_path: Path, blocklist: list[str]) -> None:
@@ -1224,9 +1297,12 @@ def process_request(req_path: Path, blocklist: list[str]) -> None:
 
 
 def main() -> None:
-    REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
-    RESPONSES_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(LOG_PATH.parent)
+    _ensure_private_directory(REQUESTS_DIR)
+    _ensure_private_directory(RESPONSES_DIR)
     blocklist = load_blocklist()
+
+    reap_expired_responses()
 
     # v0.4.0+: garbage-collect stale send nonces from previews that never
     # got a matching send (user cancelled, the host stopped before sending). Cheap; touches

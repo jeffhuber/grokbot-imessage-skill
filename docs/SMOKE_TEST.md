@@ -80,7 +80,9 @@ mv "$TMP" "$FINAL"
 ```bash
 for i in {1..20}; do
   if [[ -f "$BRIDGE/control/responses/response-$REQ_ID.json" ]]; then
-    cat "$BRIDGE/control/responses/response-$REQ_ID.json"
+    RESPONSE="$BRIDGE/control/responses/response-$REQ_ID.json"
+    cat "$RESPONSE"
+    rm -f "$RESPONSE"
     break
   fi
   sleep 0.5
@@ -151,7 +153,7 @@ done
 2. Grok Bot waits for your explicit approval.
 3. You confirm.
 4. Grok Bot runs `send` with the `send_nonce` from the preview.
-5. **The helper displays a native macOS confirmation dialog** showing recipient, service, and message text. You must click **Send** to proceed (or **Cancel** to abort).
+5. **The helper displays a native macOS confirmation dialog** showing the exact recipient and full message text in a scrollable view. Cancel is the keyboard default; deliberately select **Send** to proceed.
 6. You see a confirmation: `sent_at` timestamp and resolved recipient name.
 7. The message appears in Messages.app on your Mac as sent.
 
@@ -207,7 +209,7 @@ You can now use Grok Bot to:
 | `sqlite3.OperationalError` in logs | FDA not granted or stale | Re-add the wrapper in System Settings → Full Disk Access |
 | Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
 | `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
-| Messages decode as empty | `attributedBody` parser failed | Check logs for the first 64 bytes of unparseable blobs; may need a patch |
+| Messages decode as empty | `attributedBody` parser failed | Check logs for a byte-count-only parser diagnostic |
 
 ---
 

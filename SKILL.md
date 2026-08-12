@@ -81,7 +81,7 @@ To invoke the helper, you:
 1. **Generate a unique request ID** (use a UUID or timestamp).
 2. **Write a JSON request file** to `<bridge>/control/requests/request-<id>.json`.
 3. **Poll for the response** at `<bridge>/control/responses/response-<id>.json` (typically appears within 2–5 seconds).
-4. **Read and parse the response.**
+4. **Read and parse the response, then delete the response file immediately.** Responses can contain private message text. The helper reaps abandoned responses after one hour, but client deletion is the primary lifecycle.
 
 **Request format:**
 
@@ -151,7 +151,9 @@ mv "$TMP" "$FINAL"
 # Poll for response (max 15 seconds)
 for i in {1..30}; do
   if [[ -f "$BRIDGE/control/responses/response-$REQ_ID.json" ]]; then
-    cat "$BRIDGE/control/responses/response-$REQ_ID.json"
+    RESPONSE="$BRIDGE/control/responses/response-$REQ_ID.json"
+    cat "$RESPONSE"
+    rm -f "$RESPONSE"
     break
   fi
   sleep 0.5
@@ -290,7 +292,7 @@ The helper writes `text` to a temporary UTF-8 file, shells out to `/usr/bin/osas
 - The `send_nonce` must be present, fresh (within TTL), and match the payload.
 - Nonces are single-use: consumed on first `send` attempt, deleted on any validation failure.
 - Replaying a used nonce, sending without a nonce, or changing the payload after preview all result in rejection before the confirmation dialog appears.
-- **v1.0.0+: After nonce validation succeeds, the helper displays a native macOS dialog** showing the recipient (resolved name if available), service, and truncated message text. The user must click **Send** to proceed; clicking **Cancel** or waiting 60 seconds aborts the send. This enforces human approval at the helper level.
+- **After nonce validation succeeds, the helper displays a native macOS dialog** showing the resolved name, exact recipient address, service, and full message text in a scrollable view. Cancel is the keyboard default. The user must deliberately select **Send**; cancelling or waiting 60 seconds aborts the send.
 - Text must be 1–4000 chars with no C0 control bytes other than `\n`, `\r`, `\t`.
 - Recipient must not be on `contacts/blocked_chats.txt`.
 - **Group chat IDs are NOT supported as send targets.** Only individual phone numbers or email addresses work for sending.
@@ -330,7 +332,9 @@ mv "$TMP" "$FINAL"
 # Poll for preview response
 for i in {1..30}; do
   if [[ -f "$BRIDGE/control/responses/response-$REQ_ID_PREVIEW.json" ]]; then
-    PREVIEW=$(cat "$BRIDGE/control/responses/response-$REQ_ID_PREVIEW.json")
+    PREVIEW_RESPONSE="$BRIDGE/control/responses/response-$REQ_ID_PREVIEW.json"
+    PREVIEW=$(cat "$PREVIEW_RESPONSE")
+    rm -f "$PREVIEW_RESPONSE"
     echo "$PREVIEW"
     break
   fi
@@ -355,7 +359,9 @@ mv "$TMP" "$FINAL"
 # Poll for send response
 for i in {1..30}; do
   if [[ -f "$BRIDGE/control/responses/response-$REQ_ID_SEND.json" ]]; then
-    cat "$BRIDGE/control/responses/response-$REQ_ID_SEND.json"
+    SEND_RESPONSE="$BRIDGE/control/responses/response-$REQ_ID_SEND.json"
+    cat "$SEND_RESPONSE"
+    rm -f "$SEND_RESPONSE"
     break
   fi
   sleep 0.5
@@ -405,7 +411,7 @@ The blocklist is the reliable filter; redaction is a second line of defense.
 | First send fails with Automation prompt | macOS needs Automation permission | Click **OK** on the prompt; future sends will work |
 | `send gate: missing nonce` | `send` called without prior `send_preview` | Always call `send_preview` first and pass the returned nonce |
 | `send payload differs from preview` | Body or recipient changed after preview | Re-run `send_preview` to mint a fresh nonce for the new payload |
-| Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt`—helper logs the first 64 bytes of unparseable blobs |
+| Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt` for a byte-count-only parser diagnostic |
 
 Check `<bridge>/control/log.txt` first when debugging. It contains helper stderr and logging.
 

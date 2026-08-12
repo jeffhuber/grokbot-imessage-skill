@@ -147,8 +147,8 @@ Sending is confirmation-gated via a two-layer preview/confirm protocol:
    system dialog** showing:
    - Recipient (resolved contact name if available)
    - Service (iMessage or SMS)
-   - Truncated message text (first 200 chars)
-5. You must click **Send** to proceed. Clicking **Cancel** or waiting
+   - Full message text in a scrollable, read-only view
+5. Cancel is the keyboard default. You must deliberately select **Send** to proceed. Clicking **Cancel** or waiting
    60 seconds aborts the send.
 6. Only after the dialog is confirmed does the helper call `osascript`
    to send.
@@ -165,7 +165,7 @@ An attacker who can write to the bridge folder would need to:
    silently swap the recipient or body.
 2. Wait for the victim to click **Send** in the native macOS dialog that
    appears on their screen. The dialog shows recipient, service, and
-   message preview; the victim would see the attack payload.
+   complete message body; the victim can inspect the exact attack payload.
 
 The v0.3.x AI-side check still runs as well; the helper-side nonce gate
 and native dialog are defense in depth, not a replacement.
@@ -205,8 +205,13 @@ The plugin does **not**:
 - Send telemetry.
 - Phone home.
 - Auto-update.
-- Log message content to disk outside of the short-lived `chat.db`
-  copy used for reads (see below).
+- Log message bodies or raw attributed-body bytes.
+
+Response JSON can contain message content. Clients are required to delete each
+response immediately after parsing it, and the helper reaps abandoned responses
+after one hour. Response files and `control/log.txt` are mode `600`; parser logs
+record only failure metadata and byte counts, never raw message bytes. Logs
+rotate at 1 MiB with three backups.
 
 ## The chat.db copy
 
@@ -248,8 +253,9 @@ happens, this plugin will need to be rewritten or will stop working.
 
 You can verify what's actually on your disk:
 
-- All source is in this repository. Read `bin/helper.py` — it's pure
-  Python and the only thing that runs with FDA + Automation-over-Messages.
+- All source is in this repository. Read `bin/helper.py` and
+  `bin/send_gate.py`; they run inside the FDA-granted Python process. The
+  native confirmation source is `bin/confirm_imessage_send.m`.
 - The C wrapper source is in `bin/cowork_imessage_helper.c`. It does
   approximately nothing — it exists to stabilize the CDHash. You can
   rebuild it yourself; the README documents the one-line `clang` command

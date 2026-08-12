@@ -8,14 +8,15 @@ __pycache__/
 
 # Build artifacts (per-machine — users build locally via install.sh)
 bin/cowork-imessage-helper
+bin/confirm-imessage-send
 *.plugin
 
 # Runtime state (created by install.sh or helper)
 control/
 nonces/
 
-# User-specific contacts blocklist (preserve if present)
-# contacts/blocked_chats.txt  # Uncomment to ignore user's blocklist
+# User-specific privacy configuration
+contacts/blocked_chats.txt
 
 # Editor scratch
 *.swp

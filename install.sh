@@ -6,7 +6,7 @@
 #      installed (for clang + codesign).
 #   2. Creates control/requests, control/responses, and contacts/ if missing.
 #   3. chmod 500 bin/helper.py so the wrapper won't refuse to exec it.
-#   4. Compiles bin/cowork-imessage-helper with the install dir baked in.
+#   4. Compiles the FDA wrapper and native send-confirmation helper.
 #   5. Ad-hoc code-signs the wrapper so macOS can give FDA a stable identity
 #      to attach to. Re-signing on content-identical rebuilds keeps the grant.
 #   6. Fills in the launchd plist template and installs it under
@@ -32,6 +32,8 @@ CONTACTS_DIR="$INSTALL_ROOT/contacts"
 HELPER_PY="$BIN_DIR/helper.py"
 WRAPPER_SRC="$BIN_DIR/cowork_imessage_helper.c"
 WRAPPER_BIN="$BIN_DIR/cowork-imessage-helper"
+CONFIRM_SRC="$BIN_DIR/confirm_imessage_send.m"
+CONFIRM_BIN="$BIN_DIR/confirm-imessage-send"
 PLIST_TEMPLATE="$INSTALL_ROOT/com.user.cowork-imessage.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.user.cowork-imessage.plist"
 LAUNCHCTL_LABEL="com.user.cowork-imessage"
@@ -66,6 +68,10 @@ if [[ ! -f "$WRAPPER_SRC" ]]; then
 fi
 if [[ ! -f "$HELPER_PY" ]]; then
     red "Missing $HELPER_PY"
+    exit 1
+fi
+if [[ ! -f "$CONFIRM_SRC" ]]; then
+    red "Missing $CONFIRM_SRC"
     exit 1
 fi
 if [[ ! -f "$PLIST_TEMPLATE" ]]; then
@@ -127,11 +133,19 @@ clang -Wall -Wextra -Werror -O2 \
 chmod 700 "$WRAPPER_BIN"
 green "  built $WRAPPER_BIN"
 
+clang -Wall -Wextra -Werror -fobjc-arc \
+    -framework AppKit -framework Foundation \
+    -o "$CONFIRM_BIN" "$CONFIRM_SRC"
+chmod 700 "$CONFIRM_BIN"
+green "  built $CONFIRM_BIN"
+
 # ---- 5. ad-hoc code-sign -------------------------------------------------
 # The hardened runtime flag blocks DYLD_INSERT_LIBRARIES et al, so an
 # attacker can't hijack our FDA grant via library injection.
 codesign --force --sign - --options runtime "$WRAPPER_BIN"
 green "  ad-hoc signed $WRAPPER_BIN"
+codesign --force --sign - --options runtime "$CONFIRM_BIN"
+green "  ad-hoc signed $CONFIRM_BIN"
 
 # Record the CDHash so the user can tell whether a re-sign is needed later.
 CDHASH=$(codesign -dvvv "$WRAPPER_BIN" 2>&1 | awk -F'=' '/CDHash=/{print $2; exit}')
