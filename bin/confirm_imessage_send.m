@@ -89,11 +89,12 @@ int main(void) {
         sendButton.keyEquivalent = @"";
 
         ConfirmationTimeout *timeout = [[ConfirmationTimeout alloc] init];
-        NSTimer *timer = [NSTimer scheduledTimerWithTimeInterval:kConfirmationTimeoutSeconds
-                                                         target:timeout
-                                                       selector:@selector(fire:)
-                                                       userInfo:nil
-                                                        repeats:NO];
+        NSTimer *timer = [NSTimer timerWithTimeInterval:kConfirmationTimeoutSeconds
+                                                 target:timeout
+                                               selector:@selector(fire:)
+                                               userInfo:nil
+                                                repeats:NO];
+        [[NSRunLoop currentRunLoop] addTimer:timer forMode:NSModalPanelRunLoopMode];
 
         [NSApp activateIgnoringOtherApps:YES];
         NSModalResponse response = [alert runModal];

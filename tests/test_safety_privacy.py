@@ -125,6 +125,9 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         self.assertLess(cancel_pos, send_pos)
         self.assertIn('cancelButton.keyEquivalent = @"\\r"', source)
         self.assertIn('sendButton.keyEquivalent = @""', source)
+        self.assertIn("timerWithTimeInterval:kConfirmationTimeoutSeconds", source)
+        self.assertIn("forMode:NSModalPanelRunLoopMode", source)
+        self.assertNotIn("scheduledTimerWithTimeInterval", source)
 
 
 class SensitiveArtifactTests(unittest.TestCase):
@@ -140,14 +143,38 @@ class SensitiveArtifactTests(unittest.TestCase):
 
     def test_responses_are_mode_600_and_atomically_written(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-response-test-") as td:
-            response_dir = Path(td)
+            response_dir = Path(td) / "responses"
+            response_dir.mkdir(mode=0o755)
+            response_dir.chmod(0o755)
             with mock.patch.object(helper, "RESPONSES_DIR", response_dir):
                 helper.write_response("abc123", {"ok": True, "text": "private"})
 
             response = response_dir / "response-abc123.json"
             self.assertTrue(response.exists())
+            self.assertEqual(stat.S_IMODE(response_dir.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(response.stat().st_mode), 0o600)
             self.assertEqual(list(response_dir.glob("*.tmp")), [])
+
+    def test_main_hardens_control_and_queue_directories(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-control-test-") as td:
+            control_dir = Path(td) / "control"
+            requests_dir = control_dir / "requests"
+            responses_dir = control_dir / "responses"
+            for path in (requests_dir, responses_dir):
+                path.mkdir(parents=True, mode=0o755)
+                path.chmod(0o755)
+            control_dir.chmod(0o755)
+
+            with mock.patch.object(helper, "LOG_PATH", control_dir / "log.txt"), mock.patch.object(
+                helper, "REQUESTS_DIR", requests_dir
+            ), mock.patch.object(helper, "RESPONSES_DIR", responses_dir), mock.patch.object(
+                helper, "load_blocklist", return_value=[]
+            ), mock.patch.object(helper, "reap_expired_nonces"):
+                helper.main()
+
+            for path in (control_dir, requests_dir, responses_dir):
+                with self.subTest(path=path):
+                    self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o700)
 
     def test_response_reaper_keeps_fresh_and_removes_stale(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-response-test-") as td:
@@ -167,16 +194,26 @@ class SensitiveArtifactTests(unittest.TestCase):
 
     def test_log_is_mode_600_and_rotated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-log-test-") as td:
+            Path(td).chmod(0o755)
             log_path = Path(td) / "log.txt"
             log_path.write_text("x" * 32)
+            log_path.chmod(0o644)
+            first_archive = Path(td) / "log.txt.1"
+            first_archive.write_text("older")
+            first_archive.chmod(0o644)
             with mock.patch.object(helper, "LOG_PATH", log_path), mock.patch.object(
                 helper, "LOG_MAX_BYTES", 16
             ):
                 helper.log("fresh diagnostic")
 
+            self.assertEqual(stat.S_IMODE(Path(td).stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(log_path.stat().st_mode), 0o600)
             self.assertIn("fresh diagnostic", log_path.read_text())
-            self.assertEqual((Path(td) / "log.txt.1").read_text(), "x" * 32)
+            self.assertEqual(first_archive.read_text(), "x" * 32)
+            self.assertEqual(stat.S_IMODE(first_archive.stat().st_mode), 0o600)
+            second_archive = Path(td) / "log.txt.2"
+            self.assertEqual(second_archive.read_text(), "older")
+            self.assertEqual(stat.S_IMODE(second_archive.stat().st_mode), 0o600)
 
     def test_personal_blocklist_is_gitignored(self) -> None:
         gitignore = (REPO_ROOT / ".gitignore").read_text().splitlines()

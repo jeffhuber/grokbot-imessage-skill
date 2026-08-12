@@ -60,7 +60,7 @@ class ValidationTests(unittest.TestCase):
 
 class AttributedBodyTests(unittest.TestCase):
     def test_short_medium_and_unicode_bodies(self) -> None:
-        for text in ("hello", "x" * 300, "cafe \U0001f389"):
+        for text in ("hello", "x" * 300, "x" * 0x10000, "cafe \U0001f389"):
             with self.subTest(length=len(text)):
                 self.assertEqual(
                     helper.decode_attributed_body(make_attributed_blob(text.encode())),
@@ -75,22 +75,28 @@ class AttributedBodyTests(unittest.TestCase):
             b"streamtyped\x00\x00\x00\x00\x00NSString\x01\x2b\x81",
             b"streamtyped\x00\x00\x00\x00\x00NSString\x01\x2b\x32short",
         )
-        with mock.patch.object(helper, "log"):
+        sentinel = "private-malformed-body-sentinel"
+        values += (make_attributed_blob(sentinel.encode())[:-1],)
+        with mock.patch.object(helper, "log") as log:
             for value in values:
                 with self.subTest(value=value):
                     self.assertEqual(helper.decode_attributed_body(value), "")
+        logged = " ".join(str(call.args[0]) for call in log.call_args_list)
+        self.assertNotIn(sentinel, logged)
 
 
 class RedactionTests(unittest.TestCase):
     def test_common_secrets_are_redacted(self) -> None:
         cases = (
-            ("Your verification code is 123456", "[REDACTED-2FA]"),
-            ("Card 4111-1111-1111-1111", "[REDACTED-CARD]"),
-            ("SSN 123-45-6789", "[REDACTED-SSN]"),
+            ("Your verification code is 937461", "937461", "[REDACTED-2FA]"),
+            ("Card 4111-1111-1111-1111", "4111-1111-1111-1111", "[REDACTED-CARD]"),
+            ("SSN 321-54-9876", "321-54-9876", "[REDACTED-SSN]"),
         )
-        for text, marker in cases:
+        for text, secret, marker in cases:
             with self.subTest(marker=marker):
-                self.assertIn(marker, helper.redact(text))
+                redacted = helper.redact(text)
+                self.assertIn(marker, redacted)
+                self.assertNotIn(secret, redacted)
 
     def test_plain_text_is_unchanged(self) -> None:
         text = "Meet me at 6:30 by the library"

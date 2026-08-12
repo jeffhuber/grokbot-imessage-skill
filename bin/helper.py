@@ -107,17 +107,26 @@ import subprocess  # noqa: E402  — used only by send actions, keep the import 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
+def _ensure_private_directory(path: Path) -> None:
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
 def log(msg: str) -> None:
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_private_directory(LOG_PATH.parent)
         if LOG_PATH.exists() and LOG_PATH.stat().st_size >= LOG_MAX_BYTES:
             oldest = LOG_PATH.with_name(f"{LOG_PATH.name}.{LOG_BACKUP_COUNT}")
             oldest.unlink(missing_ok=True)
             for index in range(LOG_BACKUP_COUNT - 1, 0, -1):
                 source = LOG_PATH.with_name(f"{LOG_PATH.name}.{index}")
                 if source.exists():
-                    source.replace(LOG_PATH.with_name(f"{LOG_PATH.name}.{index + 1}"))
-            LOG_PATH.replace(LOG_PATH.with_name(f"{LOG_PATH.name}.1"))
+                    destination = LOG_PATH.with_name(f"{LOG_PATH.name}.{index + 1}")
+                    source.replace(destination)
+                    os.chmod(destination, 0o600)
+            first_archive = LOG_PATH.with_name(f"{LOG_PATH.name}.1")
+            LOG_PATH.replace(first_archive)
+            os.chmod(first_archive, 0o600)
         fd = os.open(LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
         os.chmod(LOG_PATH, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as f:
@@ -1186,7 +1195,7 @@ def write_response(req_filename_stem: str, data: dict) -> None:
     """Write response JSON atomically. Uses the request filename stem to
     derive the response filename, never trusting JSON id for the path.
     """
-    RESPONSES_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _ensure_private_directory(RESPONSES_DIR)
     path = RESPONSES_DIR / f"response-{req_filename_stem}.json"
     tmp = RESPONSES_DIR / f".{path.name}.{uuid.uuid4().hex}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1288,8 +1297,9 @@ def process_request(req_path: Path, blocklist: list[str]) -> None:
 
 
 def main() -> None:
-    REQUESTS_DIR.mkdir(parents=True, exist_ok=True)
-    RESPONSES_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_private_directory(LOG_PATH.parent)
+    _ensure_private_directory(REQUESTS_DIR)
+    _ensure_private_directory(RESPONSES_DIR)
     blocklist = load_blocklist()
 
     reap_expired_responses()
