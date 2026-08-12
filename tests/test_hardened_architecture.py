@@ -24,6 +24,43 @@ ALLOWLIST_SPEC.loader.exec_module(configure_allowlist)
 
 
 class ReadPolicyTests(unittest.TestCase):
+    def test_empty_allowlist_environment_uses_bridge_default(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-policy-path-test-") as td:
+            bridge = Path(td) / "bridge"
+            probe = """
+import importlib.util
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("policy_path_probe", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+print(module.ALLOWLIST_PATH)
+"""
+            env = os.environ.copy()
+            env["COWORK_IMESSAGE_BRIDGE_DIR"] = str(bridge)
+            env["COWORK_IMESSAGE_READ_ALLOWLIST"] = ""
+            result = subprocess.run(
+                [sys.executable, "-c", probe, str(REPO_ROOT / "bin" / "helper.py")],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            str(bridge.resolve() / "contacts" / "allowed_chats.txt"),
+        )
+
+    def test_policy_loader_rejects_directory_paths(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-policy-dir-test-") as td:
+            with mock.patch.object(helper, "log"):
+                self.assertEqual(helper._load_list(Path(td)), ())
+
     def test_allowlist_defaults_to_deny_and_blocklist_takes_precedence(self) -> None:
         policy = helper.PrivacyPolicy(
             mode="allowlist",
@@ -105,7 +142,9 @@ class WrapperValidationTests(unittest.TestCase):
             confirmation = root / "confirm"
             wrapper = root / "wrapper"
             helper_script.write_text(
-                "import os; print(os.environ['COWORK_IMESSAGE_BRIDGE_DIR'])\n"
+                "import os\n"
+                "print(os.environ['COWORK_IMESSAGE_BRIDGE_DIR'])\n"
+                "print(os.environ['COWORK_IMESSAGE_READ_ALLOWLIST'])\n"
             )
             send_gate.write_text("# trusted fixture\n")
             confirmation.write_text("#!/bin/sh\nexit 0\n")
@@ -137,7 +176,13 @@ class WrapperValidationTests(unittest.TestCase):
 
             healthy = subprocess.run([str(wrapper)], capture_output=True, text=True, check=False)
             self.assertEqual(healthy.returncode, 0, healthy.stderr)
-            self.assertEqual(healthy.stdout.strip(), str(root / "bridge"))
+            self.assertEqual(
+                healthy.stdout.splitlines(),
+                [
+                    str(root / "bridge"),
+                    str(root / "bridge" / "contacts" / "allowed_chats.txt"),
+                ],
+            )
 
             send_gate.chmod(0o520)
             writable = subprocess.run([str(wrapper)], capture_output=True, text=True, check=False)

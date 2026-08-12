@@ -52,11 +52,9 @@ BLOCKLIST_PATH = BRIDGE_ROOT / "contacts" / "blocked_chats.txt"
 ALLOWLIST_PATH = Path(
     os.path.abspath(
         os.path.expanduser(
-            str(
-                os.environ.get(
-                    "COWORK_IMESSAGE_READ_ALLOWLIST",
-                    BRIDGE_ROOT / "contacts" / "allowed_chats.txt",
-                )
+            os.environ.get("COWORK_IMESSAGE_READ_ALLOWLIST")
+            or str(
+                BRIDGE_ROOT / "contacts" / "allowed_chats.txt"
             )
         )
     )
@@ -438,9 +436,12 @@ def _load_list(path: Path, require_root_owner: bool = False) -> tuple[str, ...]:
         metadata = path.lstat()
     except FileNotFoundError:
         return ()
+    if not stat.S_ISREG(metadata.st_mode):
+        log(f"privacy policy rejected: {path} must be a regular file")
+        return ()
     if require_root_owner:
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0:
-            log(f"privacy policy rejected: {path} must be a root-owned regular file")
+        if metadata.st_uid != 0:
+            log(f"privacy policy rejected: {path} must be root-owned")
             return ()
         if metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
             log(f"privacy policy rejected: {path} has group/world permissions")
