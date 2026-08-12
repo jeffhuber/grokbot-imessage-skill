@@ -25,6 +25,8 @@ def main() -> int:
             payload = plistlib.load(stream)
     except (OSError, plistlib.InvalidFileException):
         return 1
+    if not isinstance(payload, dict):
+        return 1
 
     arguments = payload.get("ProgramArguments")
     watch_paths = payload.get("WatchPaths")

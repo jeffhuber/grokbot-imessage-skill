@@ -15,7 +15,7 @@ if [[ "$(uname)" != "Darwin" ]]; then
     exit 1
 fi
 
-SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PRODUCT_ROOT="/Library/Application Support/GrokBotIMessage"
 USER_ROOT="$PRODUCT_ROOT/users/$UID"
 CODE_ROOT="$USER_ROOT/libexec"
@@ -32,6 +32,23 @@ ALLOWLIST="$CONFIG_ROOT/allowed_chats.txt"
 CURRENT_USER="$(id -un)"
 BUILD_DIR="$(mktemp -d -t grokbot-imessage-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
+
+require_safe_runtime_entry() {
+    local path="$1"
+    local kind="$2"
+    if [[ -L "$path" ]]; then
+        echo "Error: refusing symlinked runtime path: $path" >&2
+        exit 1
+    fi
+    if [[ -e "$path" && "$kind" == "directory" && ! -d "$path" ]]; then
+        echo "Error: expected a runtime directory: $path" >&2
+        exit 1
+    fi
+    if [[ -e "$path" && "$kind" == "file" && ! -f "$path" ]]; then
+        echo "Error: expected a regular runtime file: $path" >&2
+        exit 1
+    fi
+}
 
 for cmd in clang codesign launchctl python3 sudo; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -66,6 +83,15 @@ for path in \
     fi
 done
 
+for path in "$BRIDGE_ROOT/control" "$BRIDGE_ROOT/control/requests" \
+    "$BRIDGE_ROOT/control/responses" "$BRIDGE_ROOT/contacts"; do
+    require_safe_runtime_entry "$path" directory
+done
+for path in "$BRIDGE_ROOT/control/log.txt" \
+    "$BRIDGE_ROOT/contacts/blocked_chats.txt" \
+    "$BRIDGE_ROOT/contacts/read_policy.txt"; do
+    require_safe_runtime_entry "$path" file
+done
 mkdir -p "$BRIDGE_ROOT/control/requests" "$BRIDGE_ROOT/control/responses" \
     "$BRIDGE_ROOT/contacts"
 BRIDGE_ROOT="$(cd "$BRIDGE_ROOT" && pwd -P)"

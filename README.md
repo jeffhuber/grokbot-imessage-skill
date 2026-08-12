@@ -210,7 +210,12 @@ Sending is gated at the **helper level** with two layers of protection:
    - **Cancel is the keyboard default.** You must deliberately select **Send** to proceed. Clicking Cancel or waiting 60 seconds aborts the send.
    - This dialog enforces human approval at the macOS level—even a valid nonce requires explicit user confirmation.
 
-Nonces expire after 60 seconds, are single-use, and are deleted on any validation failure. A process that can write to the bridge folder cannot silently send without both: (a) racing a real user-approved preview inside its 60s window, and (b) the user clicking **Send** in the native dialog that appears on their screen.
+Nonces expire after 60 seconds, are single-use, and are deleted on validation
+failure. A process that can read and write the bridge can mint its own nonce, so
+the nonce is not an authorization boundary against that attacker; it prevents
+blind, replayed, and payload-swapped sends. Silent sending is prevented by the
+native dialog: the user must deliberately click **Send** after reviewing the
+exact recipient and complete body. Cancel any unexpected dialog.
 
 See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
 
@@ -218,7 +223,7 @@ See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
 
 ## Architecture
 
-```
+```text
   Grok Bot (your context)             macOS (your local machine)
   -----------------------             -------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->

@@ -169,13 +169,12 @@ nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
 seconds), or a nonce whose bound payload differs from the `send` request's
 `(to, text, service)` is rejected before the dialog appears. Nonces are stored as per-file records under `<bridge-folder>/nonces/`; the nonce directory is mode `700` and nonce files are mode `600`. Nonces are single-use (deleted on consume) and are also deleted on validation failure so the same nonce cannot be retried with a corrected payload.
 
-An attacker who can write to the bridge folder would need to:
-1. Race a real, user-approved preview inside its 60-second window *and*
-   send the exact same payload the user saw in chat — they cannot
-   silently swap the recipient or body.
-2. Wait for the victim to click **Send** in the native macOS dialog that
-   appears on their screen. The dialog shows recipient, service, and
-   complete message body; the victim can inspect the exact attack payload.
+An attacker who can write to and read from the bridge can mint its own preview
+nonce; the nonce is not an authorization boundary against that attacker. It
+still prevents a blind one-request send, replay, or swapping the payload after a
+preview. To complete any attacker-created send, the victim must deliberately
+click **Send** in the native dialog showing the exact recipient, service, and
+complete message body. Unexpected dialogs should always be cancelled.
 
 The v0.3.x AI-side check still runs as well; the helper-side nonce gate
 and native dialog are defense in depth, not a replacement.

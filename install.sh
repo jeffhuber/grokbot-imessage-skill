@@ -51,6 +51,23 @@ green() { printf "\033[32m%s\033[0m\n" "$*"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
 red() { printf "\033[31m%s\033[0m\n" "$*" 1>&2; }
 
+require_safe_runtime_entry() {
+    local path="$1"
+    local kind="$2"
+    if [[ -L "$path" ]]; then
+        red "Refusing symlinked runtime path: $path"
+        exit 1
+    fi
+    if [[ -e "$path" && "$kind" == "directory" && ! -d "$path" ]]; then
+        red "Expected a runtime directory: $path"
+        exit 1
+    fi
+    if [[ -e "$path" && "$kind" == "file" && ! -f "$path" ]]; then
+        red "Expected a regular runtime file: $path"
+        exit 1
+    fi
+}
+
 if [[ "$INSTALL_GROK_SKILL" != "0" && "$INSTALL_GROK_SKILL" != "1" ]]; then
     red "INSTALL_GROK_SKILL must be 0 or 1."
     exit 1
@@ -122,6 +139,14 @@ echo "  launchd plist: $PLIST_DEST"
 echo
 
 # ---- 2. control / contacts directories -----------------------------------
+for path in "$CONTROL_DIR" "$CONTROL_DIR/requests" \
+    "$CONTROL_DIR/responses" "$CONTACTS_DIR"; do
+    require_safe_runtime_entry "$path" directory
+done
+for path in "$CONTROL_DIR/log.txt" "$CONTACTS_DIR/blocked_chats.txt" \
+    "$CONTACTS_DIR/allowed_chats.txt" "$CONTACTS_DIR/read_policy.txt"; do
+    require_safe_runtime_entry "$path" file
+done
 mkdir -p "$CONTROL_DIR/requests" "$CONTROL_DIR/responses" "$CONTACTS_DIR"
 touch "$CONTROL_DIR/log.txt"
 chmod 700 "$INSTALL_ROOT" "$CONTROL_DIR" "$CONTROL_DIR/requests" \

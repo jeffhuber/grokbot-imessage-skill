@@ -76,6 +76,16 @@ class LaunchAgentIdentityTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 1, result.stderr)
 
+    def test_legacy_migration_rejects_non_dictionary_plist(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-legacy-agent-test-") as td:
+            plist = Path(td) / "legacy.plist"
+            with plist.open("wb") as stream:
+                plistlib.dump(["not", "a", "launch-agent"], stream)
+
+            result = self._verify(plist, "/tmp/helper", "/tmp/requests")
+
+        self.assertEqual(result.returncode, 1, result.stderr)
+
     def test_installers_and_uninstallers_use_only_grok_identity(self) -> None:
         for name in ("install.sh", "install-hardened.sh", "uninstall.sh", "uninstall-hardened.sh"):
             source = (REPO_ROOT / name).read_text()
