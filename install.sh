@@ -17,6 +17,14 @@
 
 set -euo pipefail
 
+# ---- Early guard: reject root/sudo ------------------------------------------
+if [[ "$EUID" -eq 0 ]]; then
+    printf "\033[31mError: Do not run this installer as root or with sudo.\033[0m\n" 1>&2
+    printf "This is a per-user LaunchAgent. Run as your normal user:\n" 1>&2
+    printf "  ./install.sh\n" 1>&2
+    exit 1
+fi
+
 INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$INSTALL_ROOT/bin"
 CONTROL_DIR="$INSTALL_ROOT/control"
@@ -131,7 +139,25 @@ echo "  cdhash: ${CDHASH:-unknown}"
 
 # ---- 6. launchd plist ----------------------------------------------------
 mkdir -p "$(dirname "$PLIST_DEST")"
-sed "s|{{INSTALL_ROOT}}|$INSTALL_ROOT|g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+
+# Use Python to generate the plist with proper XML escaping instead of sed.
+python3 - "$INSTALL_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
+import sys, xml.etree.ElementTree as ET
+
+install_root, dest, template = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Read template and replace placeholder with properly escaped path.
+tree = ET.parse(template)
+root = tree.getroot()
+
+# Find all <string> elements and replace the placeholder.
+for elem in root.iter("string"):
+    if elem.text and "{{INSTALL_ROOT}}" in elem.text:
+        elem.text = elem.text.replace("{{INSTALL_ROOT}}", install_root)
+
+tree.write(dest, encoding="UTF-8", xml_declaration=True)
+PYGEN
+
 chmod 644 "$PLIST_DEST"
 green "  wrote $PLIST_DEST"
 

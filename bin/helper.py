@@ -829,6 +829,8 @@ def action_search(params, conn, contacts, blocklist):
     cutoff_ns = to_apple_ns(time.time() - days * 86400)
     msgs = fetch_messages(conn, cutoff_ns, search=term)
     msgs = apply_blocklist(msgs, blocklist)
+    # Sort descending by timestamp so newest matches come first.
+    msgs.sort(key=lambda x: x["ts_ns"], reverse=True)
     matches = []
     for m in msgs[:limit]:
         name = lookup_name(m["chat_id"], m["sender"], contacts)
@@ -1009,6 +1011,32 @@ def action_send(params, conn, contacts, blocklist):
     # enforces preview-then-confirm even if the bridge has been bypassed
     # by some process writing directly into control/requests/.
     consume_send_nonce(params.get("send_nonce"), to, text, service)
+
+    # v1.0.0+: native macOS confirmation dialog. After nonce validation
+    # succeeds, require explicit human approval via a native dialog before
+    # AppleScript sends. This prevents any process that can write to the
+    # bridge from silently sending — even with a valid nonce, the human
+    # must click Send in the system dialog.
+    resolved_name = _resolve_contact_name(to, contacts)
+    display_to = resolved_name or to
+    # Truncate message preview to 200 chars for dialog readability.
+    preview_text = (text[:200] + "...") if len(text) > 200 else text
+    preview_text_escaped = _escape_as_string(preview_text)
+    
+    dialog_script = (
+        f'display dialog "Send {service} to {_escape_as_string(display_to)}?\\n\\n'
+        f'{preview_text_escaped}" '
+        f'buttons {{"Cancel", "Send"}} default button "Send" '
+        f'with title "Confirm iMessage Send" '
+        f'giving up after 60'
+    )
+    rc, stdout, stderr = _run_osascript(dialog_script)
+    # rc=0 means user clicked Send; rc=1 means Cancel; rc!=0 means timeout or error.
+    # stdout contains the button clicked or "gave up:true" on timeout.
+    if rc != 0 or "Cancel" in stdout or "gave up:true" in stdout:
+        raise RuntimeError(
+            "send cancelled by user or timed out (60s dialog limit)"
+        )
 
     if service == "iMessage":
         svc_clause = "1st service whose service type = iMessage"

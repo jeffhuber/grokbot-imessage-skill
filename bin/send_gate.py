@@ -76,7 +76,9 @@ def mint_send_nonce(to: str, body: str, service: str) -> str:
 
 def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
     """Called from action_send. Raises SendGateError on any failure;
-    deletes the nonce on success so it can't be reused."""
+    deletes the nonce on success so it can't be reused.
+    
+    Atomically claims the nonce file to prevent concurrent double-send races."""
     if not isinstance(nonce, str) or not nonce:
         raise SendGateError("missing nonce; call send_preview first")
     if not _NONCE_RE.match(nonce):
@@ -84,30 +86,39 @@ def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
         raise SendGateError("invalid nonce format")
 
     path = _nonce_dir() / f"{nonce}.json"
+    claimed_path = _nonce_dir() / f"{nonce}.claimed"
+
+    # Atomically claim the nonce file to prevent concurrent consumption.
     try:
-        record = json.loads(path.read_text())
+        path.rename(claimed_path)
     except FileNotFoundError:
         raise SendGateError(
             "nonce not recognized; send_preview must precede send"
         )
     except Exception as e:
-        path.unlink(missing_ok=True)
+        raise SendGateError(f"failed to claim nonce: {e}")
+
+    # Now validate the claimed nonce (only one process got here).
+    try:
+        record = json.loads(claimed_path.read_text())
+    except Exception as e:
+        claimed_path.unlink(missing_ok=True)
         raise SendGateError(f"malformed nonce record: {e}")
 
     if int(time.time()) > record.get("expires_at", 0):
-        path.unlink(missing_ok=True)
+        claimed_path.unlink(missing_ok=True)
         raise SendGateError(
             f"nonce expired (TTL {SEND_NONCE_TTL}s); call send_preview again"
         )
 
     if _preview_hash(to, body, service) != record.get("preview_hash"):
-        path.unlink(missing_ok=True)
+        claimed_path.unlink(missing_ok=True)
         raise SendGateError(
             "send payload differs from preview; re-preview required"
         )
 
     # One-shot: delete on success so the nonce can't be replayed.
-    path.unlink(missing_ok=True)
+    claimed_path.unlink(missing_ok=True)
 
 
 def reap_expired_nonces() -> None:

@@ -100,25 +100,43 @@ On error:
   "id": "abc123",
   "ok": true,
   "action": "review",
+  "days": 2,
+  "counts": {
+    "needs_reply": 3,
+    "low_priority": 5,
+    "skip": 12,
+    "total_messages": 156
+  },
   "needs_reply": [
     {
-      "chat_display_name": "Angel Vossough",
-      "chat_identifier": "+14155551234",
-      "last_message_time": "2026-08-10T14:32:15",
-      "last_message_text": "Are we still on for Thursday?",
-      "last_message_is_from_me": false,
-      "unread_count": 1
+      "chat_id": "+14155551234",
+      "label": "Angel Vossough",
+      "contact_name": "Angel Vossough",
+      "display_name": "",
+      "last_ts": "2026-08-10T14:32:15",
+      "last_text": "Are we still on for Thursday?",
+      "context": [
+        {
+          "ts": "2026-08-10T14:32:15",
+          "me": false,
+          "text": "Are we still on for Thursday?"
+        }
+      ],
+      "msg_count": 1
     }
   ],
-  "low_priority": [ /* same structure */ ],
-  "skip_summary": {
-    "count": 12,
-    "reason": "mostly newsletters and notifications"
-  }
+  "low_priority": [ /* same structure as needs_reply */ ],
+  "skip_summary": [
+    {
+      "chat_id": "chat123456789",
+      "label": "Uber",
+      "last_ts": "2026-08-10T09:15:00"
+    }
+  ]
 }
 ```
 
-Sorts threads into three buckets: `needs_reply` (actionable, full text included), `low_priority` (can wait, full text included), and `skip_summary` (summary only, no text).
+Sorts threads into three buckets: `needs_reply` (actionable, full text included), `low_priority` (can wait, full text included), and `skip_summary` (summary only, no text — typically automated messages).
 
 ---
 
@@ -143,13 +161,16 @@ Sorts threads into three buckets: `needs_reply` (actionable, full text included)
   "id": "abc123",
   "ok": true,
   "action": "search",
+  "term": "dinner plans",
+  "days": 30,
+  "match_count": 3,
   "matches": [
     {
-      "chat_display_name": "Alice",
-      "chat_identifier": "+14155551234",
-      "message_text": "Let's finalize dinner plans for Friday",
-      "message_date": "2026-08-05T18:22:00",
-      "is_from_me": false
+      "chat_id": "+14155551234",
+      "contact_name": "Alice",
+      "ts": "2026-08-05T18:22:00",
+      "is_from_me": false,
+      "text": "Let's finalize dinner plans for Friday"
     }
   ]
 }
@@ -178,7 +199,7 @@ Case-insensitive substring search across all threads. Results are sorted by date
 - Contact name (resolved via Contacts.app)
 - Phone number (any format; last 10 digits are matched)
 - Email address
-- Group chat ID (e.g., `chat123456789`)
+- **Note:** Group chat IDs (e.g., `chat123456789`) are NOT supported for sending. They work for read-only actions like `chat_history` and `review`.
 
 **Response:**
 ```json
@@ -186,18 +207,23 @@ Case-insensitive substring search across all threads. Results are sorted by date
   "id": "abc123",
   "ok": true,
   "action": "chat_history",
-  "chat_display_name": "Angel Vossough",
-  "chat_identifier": "+14155551234",
+  "chat_query": "Angel Vossough",
+  "resolved_substr": "5551234",
+  "count": 2,
   "messages": [
     {
-      "message_date": "2026-08-10T14:32:15",
-      "text": "Are we still on for Thursday?",
-      "is_from_me": false
+      "chat_id": "+14155551234",
+      "contact_name": "Angel Vossough",
+      "ts": "2026-08-10T14:32:15",
+      "is_from_me": false,
+      "text": "Are we still on for Thursday?"
     },
     {
-      "message_date": "2026-08-10T14:35:00",
-      "text": "Yes! See you at 3pm",
-      "is_from_me": true
+      "chat_id": "+14155551234",
+      "contact_name": "",
+      "ts": "2026-08-10T14:35:00",
+      "is_from_me": true,
+      "text": "Yes! See you at 3pm"
     }
   ]
 }
@@ -225,16 +251,17 @@ Case-insensitive substring search across all threads. Results are sorted by date
   "id": "abc123",
   "ok": true,
   "action": "response_stats",
-  "chat_display_name": "Angel Vossough",
-  "chat_identifier": "+14155551234",
+  "chat_query": "Angel Vossough",
+  "resolved_substr": "5551234",
+  "hours": 24,
   "sample_size": 15,
   "avg_seconds": 1098,
   "avg_human": "18.3m",
   "median_seconds": 480,
   "min_seconds": 12,
   "max_seconds": 7200,
-  "inbound_count": 23,
-  "outbound_count": 19
+  "total_inbound_messages": 23,
+  "total_outbound_messages": 19
 }
 ```
 
@@ -261,17 +288,18 @@ Computes reply-time statistics over the specified window.
   "id": "abc123",
   "ok": true,
   "action": "contacts_lookup",
+  "query": "Angel",
+  "match_count": 1,
   "matches": [
     {
-      "display_name": "Angel Vossough",
-      "phone_numbers": ["+14155551234"],
-      "emails": ["angel@example.com"]
+      "name": "Angel Vossough",
+      "phone_last10": "4155551234"
     }
   ]
 }
 ```
 
-Searches Contacts.app by name. Useful for disambiguating before `chat_history` or `send`.
+Searches Contacts.app by name. Returns up to 25 matches. The `phone_last10` field contains the last 10 digits of the contact's phone number (for matching against chat identifiers). Useful for disambiguating before `chat_history` or `send`.
 
 ---
 
@@ -335,6 +363,8 @@ Searches Contacts.app by name. Useful for disambiguating before `chat_history` o
 
 The `send_nonce` is the one returned by the preceding `send_preview`. The `to`, `text`, and `service` **must** match the preview exactly. If any of these differ, the helper rejects the request with a `"send payload differs from preview"` error.
 
+**v1.0.0+: Native macOS confirmation dialog.** After nonce validation succeeds, the helper displays a native macOS dialog showing the recipient (resolved name if available), service, and truncated message text. The user must click **Send** to proceed; clicking **Cancel** or waiting 60 seconds aborts the send. This enforces human approval at the helper level—even a valid nonce requires explicit user confirmation via the system dialog.
+
 **Response on success:**
 ```json
 {
@@ -360,15 +390,26 @@ The `send_nonce` is the one returned by the preceding `send_preview`. The `to`, 
 }
 ```
 
+Or:
+```json
+{
+  "id": "abc123",
+  "ok": false,
+  "error": "send cancelled by user or timed out (60s dialog limit)"
+}
+```
+
 The helper writes `text` to a temporary UTF-8 file, shells out to `/usr/bin/osascript` with a short AppleScript, and deletes the tempfile (even on failure).
 
 **Send-gate validation (enforced helper-side):**
 
 - The `send_nonce` must be present, fresh (within TTL), and match the payload.
 - Nonces are single-use: consumed on first `send` attempt, deleted on any validation failure.
-- Replaying a used nonce, sending without a nonce, or changing the payload after preview all result in rejection before `osascript` runs.
+- Replaying a used nonce, sending without a nonce, or changing the payload after preview all result in rejection before the confirmation dialog appears.
+- After nonce validation, the user must approve via the native macOS dialog.
 - Text must be 1–4000 chars with no C0 control bytes other than `\n`, `\r`, `\t`.
 - Recipient must not be on `contacts/blocked_chats.txt`.
+- **Group chat IDs are NOT supported as send targets.** Attempting to send to a `chatNNNNN` identifier will fail. Use individual phone numbers or email addresses only.
 
 ---
 
@@ -457,16 +498,17 @@ else:
 
 **Recommended workflow:**
 
-1. **Resolve the recipient.** If the user provided a name, call `contacts_lookup` first. If multiple matches, surface them and ask.
+1. **Resolve the recipient.** If the user provided a name, call `contacts_lookup` first. If multiple matches, surface them and ask. **Note:** Group chat IDs (like `chat123456789`) cannot be used as send targets—only individual phone numbers or email addresses work for sending.
 2. **Issue `send_preview`.** Show the user:
    - Resolved recipient name
    - Service (iMessage / SMS)
    - Full text and `text_length`
    - Whether `blocked: true` (if so, stop—don't prompt for approval)
-3. **Wait for explicit user approval.** Do not proceed without confirmation.
+3. **Wait for explicit user approval in the AI chat.** Do not proceed without confirmation.
 4. **Issue `send` with the `send_nonce` from step 2.** The `to`, `text`, and `service` must match the preview exactly.
-5. **If approval takes >60s,** re-run `send_preview` to mint a fresh nonce.
-6. **Surface `sent.sent_at` and resolved name** as confirmation.
+5. **The helper will display a native macOS dialog** showing the recipient, service, and message preview. The user must click **Send** in this system dialog to complete the send.
+6. **If the AI chat approval takes >60s,** re-run `send_preview` to mint a fresh nonce.
+7. **Surface `sent.sent_at` and resolved name** as confirmation.
 
 ---
 

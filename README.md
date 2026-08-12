@@ -132,13 +132,22 @@ Phone numbers match by last 10 digits. Emails and group IDs match case-insensiti
 
 ### Send Gate (Preview-and-Confirm)
 
-Sending is gated at the **helper level** (v0.4.0+):
+Sending is gated at the **helper level** with two layers of protection:
 
-1. Grok Bot issues a `send_preview` → the helper returns the normalized payload and a **single-use send nonce** bound to that exact `(to, text, service)` triple.
-2. Grok Bot shows you the preview; you approve.
-3. Grok Bot issues a `send` with the nonce → the helper verifies the nonce matches the payload, then calls `osascript` to send.
+**1. Nonce validation (v0.4.0+):**
+   - Grok Bot issues a `send_preview` → the helper returns the normalized payload and a **single-use send nonce** bound to that exact `(to, text, service)` triple.
+   - Grok Bot shows you the preview in chat; you approve.
+   - Grok Bot issues a `send` with the nonce → the helper verifies the nonce matches the payload.
 
-Nonces expire after 60 seconds, are single-use, and are deleted on any validation failure. A process that can write to the bridge folder cannot silently send without racing a real, user-approved preview.
+**2. Native macOS dialog (v1.0.0+):**
+   - After nonce validation succeeds, the helper displays a **native macOS system dialog** showing:
+     - Recipient (resolved contact name if available, otherwise phone/email)
+     - Service (iMessage or SMS)
+     - Truncated message text (first 200 chars)
+   - You must click **Send** to proceed. Clicking **Cancel** or waiting 60 seconds aborts the send.
+   - This dialog enforces human approval at the macOS level—even a valid nonce requires explicit user confirmation.
+
+Nonces expire after 60 seconds, are single-use, and are deleted on any validation failure. A process that can write to the bridge folder cannot silently send without both: (a) racing a real user-approved preview inside its 60s window, and (b) the user clicking **Send** in the native dialog that appears on their screen.
 
 See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
 
@@ -170,12 +179,12 @@ Quick reference:
 | Action | What It Does |
 |--------|--------------|
 | `review` | Triage recent messages into needs-reply / low-priority / skip buckets |
-| `search` | Full-text substring search across all threads |
-| `chat_history` | Recent messages in one thread (by name, phone, email, or group ID) |
+| `search` | Full-text substring search across all threads (sorted newest first) |
+| `chat_history` | Recent messages in one thread (by name, phone, email, or group ID—**group IDs NOT supported for sending**) |
 | `response_stats` | Avg/median/min/max reply times to one contact |
 | `contacts_lookup` | Find matching contacts by name |
 | `send_preview` | Dry-run validation (returns a single-use nonce) |
-| `send` | Actually send (requires the nonce from `send_preview`) |
+| `send` | Actually send (requires the nonce from `send_preview` + native macOS dialog confirmation) |
 
 ---
 
@@ -209,7 +218,8 @@ If a response appears with `"ok": true` or `"ok": false`, the helper is working.
 ## Limitations
 
 - **Text only.** No attachments, images, stickers, audio, Tapback reactions, message effects, or message editing/deletion.
-- **No group-chat creation.** Can send *to* an existing group chat ID, but not create one.
+- **No group-chat sending.** Can read from group chats (they appear in `review` and `chat_history`), but cannot send *to* group chat IDs. Use individual phone numbers or emails for sending.
+- **No group-chat creation.** Cannot create new group chats.
 - **Local `chat.db` only.** If a thread hasn't synced to this Mac, it won't appear.
 - **macOS-specific.** Relies on direct `chat.db` access and AppleScript control of Messages.app—both Apple surfaces that could be deprecated in a future macOS release.
 

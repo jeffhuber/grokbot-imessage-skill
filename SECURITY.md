@@ -134,32 +134,56 @@ this plugin in its current form.
 
 ## Confirmation gate (sending)
 
-Sending is confirmation-gated via a preview/confirm protocol:
+Sending is confirmation-gated via a two-layer preview/confirm protocol:
+
+**Layer 1: Nonce validation (v0.4.0+)**
 
 1. The AI asks the helper for a `send_preview` — the helper does
    NOT send; it echoes back the normalized payload and mints a
    one-shot **send nonce** bound to exactly that `(to, text, service)`
    triple.
-2. Grok Bot shows the preview to you; you approve.
+2. Grok Bot shows the preview to you in chat; you approve.
 3. The AI asks the helper to `send`, passing the nonce from step 1.
    The helper recomputes the payload hash, compares it to the nonce's
-   stored hash, and only then calls `osascript`.
+   stored hash.
 
-As of **v0.4.0** this gate is enforced **helper-side**. A process that
-writes directly to the bridge folder and issues a `send` with no nonce,
-a forged nonce, a replayed (already-consumed) nonce, an expired nonce
-(TTL is 60 seconds), or a nonce whose bound payload differs from the
-`send` request's `(to, text, service)` is rejected before `osascript`
-runs. Nonces are stored as per-file records under
-`~/cowork-imessage/nonces/` (mode 600), are single-use (deleted on
-consume), and are also deleted on any validation failure so the same
-nonce cannot be retried with a corrected payload. An attacker who can
-write to the bridge folder would need to race a real, user-approved
-preview inside its 60-second window *and* send the exact same payload
-the user saw — they cannot silently swap the recipient or body.
+**Layer 2: Native macOS dialog (v1.0.0+)**
 
-The v0.3.x client-side check still runs as well; the helper-side gate
-is defense in depth, not a replacement.
+4. After nonce validation succeeds, the helper displays a **native macOS
+   system dialog** showing:
+   - Recipient (resolved contact name if available)
+   - Service (iMessage or SMS)
+   - Truncated message text (first 200 chars)
+5. You must click **Send** to proceed. Clicking **Cancel** or waiting
+   60 seconds aborts the send.
+6. Only after the dialog is confirmed does the helper call `osascript`
+   to send.
+
+This two-layer gate is enforced **helper-side**. A process that writes
+directly to the bridge folder and issues a `send` with no nonce, a forged
+nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
+seconds), or a nonce whose bound payload differs from the `send` request's
+`(to, text, service)` is rejected before the dialog appears. Nonces are
+stored as per-file records under `~/imessage-bridge/nonces/` (mode 600),
+are single-use (deleted on consume), and are also deleted on any
+validation failure so the same nonce cannot be retried with a corrected
+payload.
+
+An attacker who can write to the bridge folder would need to:
+1. Race a real, user-approved preview inside its 60-second window *and*
+   send the exact same payload the user saw in chat — they cannot
+   silently swap the recipient or body.
+2. Wait for the victim to click **Send** in the native macOS dialog that
+   appears on their screen. The dialog shows recipient, service, and
+   message preview; the victim would see the attack payload.
+
+The v0.3.x AI-side check still runs as well; the helper-side nonce gate
+and native dialog are defense in depth, not a replacement.
+
+**Behavior change for existing Cowork helpers:** The native dialog is new
+in v1.0.0. Existing helpers from the sibling `claudecowork-imessage-skill`
+repository (v0.4.0 and earlier) do not show the dialog. Users who upgrade
+to this helper will experience the added confirmation step.
 
 ## Blocklist
 
