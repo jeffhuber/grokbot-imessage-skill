@@ -1229,7 +1229,7 @@ def main() -> None:
     blocklist = load_blocklist()
 
     # v0.4.0+: garbage-collect stale send nonces from previews that never
-    # got a matching send (user cancelled, Claude crashed). Cheap; touches
+    # got a matching send (user cancelled, the host stopped before sending). Cheap; touches
     # only ~/imessage-bridge/nonces/ and only a few files at most.
     try:
         reap_expired_nonces()

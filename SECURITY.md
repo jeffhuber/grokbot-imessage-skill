@@ -119,11 +119,10 @@ This is the primary trust boundary you need to understand.
   executes as your UID, that process can:
   - Write a read request into the bridge folder and receive message
     contents in response.
-  - Write a `send` request. **(See the confirmation gate section below
-    — since v0.4.0 a lone `send` request without a preceding preview is
-    rejected helper-side. The attacker would also have to forge a
-    `send_preview` that shows up in Grok Bot's UI, or race the 60-second
-    window after a real one.)**
+  - Issue a `send_preview` request, read its nonce, and issue the matching
+    `send` request. This can reach the native confirmation dialog, but it
+    cannot silently send: the user must still review the displayed
+    recipient and message and click **Send**.
 
 This is the central limitation of the current design on the **read** path: a process running as your user can exfiltrate message content. The nonce protocol and native confirmation dialog reduce send-path misuse, but they do not authenticate read requests. If your threat model includes malicious supply-chain packages running as your user, do not install this plugin in its current form.
 

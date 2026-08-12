@@ -8,7 +8,7 @@ deleted on use so they can't be replayed.
 This enforces "preview-then-confirm" on the helper, so a process that
 has managed to forge an authenticated `send` request still can't send
 a message without first going through a `send_preview` that the user
-sees in Claude.
+sees in the AI host's UI.
 
 Design note: the helper is spawned per request by launchd (WatchPaths),
 so it exits between `send_preview` and `send`. Nonces are therefore
@@ -127,7 +127,7 @@ def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
 
 def reap_expired_nonces() -> None:
     """Garbage-collect stale nonce files from previews that never got a
-    matching send (user cancelled, Claude crashed, etc.). Safe to call
+    matching send (user cancelled, the host stopped before sending, etc.). Safe to call
     at helper startup. Only reaps files older than TTL or malformed files
     with mtime older than a short grace period to avoid deleting fresh
     mid-write records. Also cleans up orphaned .claimed files."""
