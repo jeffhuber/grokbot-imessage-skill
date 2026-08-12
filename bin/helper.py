@@ -35,6 +35,7 @@ import time
 import traceback
 import uuid
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -44,7 +45,11 @@ from typing import Any, Iterable
 # Paths
 # ---------------------------------------------------------------------------
 CODE_ROOT = Path(__file__).resolve().parent.parent
-BRIDGE_ROOT = Path(os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR", CODE_ROOT)).expanduser().resolve()
+BRIDGE_ROOT = Path(
+    os.path.abspath(
+        os.path.expanduser(os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR", str(CODE_ROOT)))
+    )
+)
 REQUESTS_DIR = BRIDGE_ROOT / "control" / "requests"
 RESPONSES_DIR = BRIDGE_ROOT / "control" / "responses"
 LOG_PATH = BRIDGE_ROOT / "control" / "log.txt"
@@ -104,6 +109,7 @@ MAX_LIMIT = 500
 MAX_SEARCH_LEN = 200
 MAX_TEXT_SNIPPET = 600
 MAX_CONTEXT_MESSAGES = 8
+MAX_REQUEST_BYTES = 64 * 1024
 RESPONSE_TTL_S = 60 * 60
 LOG_MAX_BYTES = 1024 * 1024
 LOG_BACKUP_COUNT = 3
@@ -122,32 +128,169 @@ import subprocess  # noqa: E402  — used only by send actions, keep the import 
 
 
 # ---------------------------------------------------------------------------
+# Secure runtime filesystem access
+# ---------------------------------------------------------------------------
+_DIR_OPEN_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_FILE_NOFOLLOW_FLAGS = os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+
+
+class UnsafeRuntimePath(RuntimeError):
+    """Raised when user-owned bridge state is not a safe local file or directory."""
+
+
+def _validate_private_directory(fd: int, label: str) -> None:
+    metadata = os.fstat(fd)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise UnsafeRuntimePath(f"{label} is not a directory")
+    if metadata.st_uid != os.getuid():
+        raise UnsafeRuntimePath(f"{label} is not owned by the current user")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise UnsafeRuntimePath(f"{label} must not have group/world permissions")
+
+
+def _open_bridge_root() -> int:
+    """Open the absolute bridge path one component at a time without symlinks."""
+    root = Path(os.path.abspath(str(BRIDGE_ROOT)))
+    if not root.is_absolute() or root == Path("/"):
+        raise UnsafeRuntimePath("bridge root must be a non-root absolute path")
+
+    fd = os.open("/", _DIR_OPEN_FLAGS)
+    try:
+        for component in root.parts[1:]:
+            next_fd = os.open(component, _DIR_OPEN_FLAGS, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        _validate_private_directory(fd, f"bridge root {root}")
+        return fd
+    except UnsafeRuntimePath:
+        os.close(fd)
+        raise
+    except OSError as exc:
+        os.close(fd)
+        raise UnsafeRuntimePath(f"unsafe bridge root {root}: {exc}") from exc
+
+
+def _runtime_relative_parts(path: Path) -> tuple[str, ...]:
+    root = Path(os.path.abspath(str(BRIDGE_ROOT)))
+    candidate = Path(os.path.abspath(str(path)))
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError as exc:
+        raise UnsafeRuntimePath(f"runtime path escapes bridge root: {candidate}") from exc
+    if any(part in ("", ".", "..") or "/" in part for part in relative.parts):
+        raise UnsafeRuntimePath(f"invalid runtime path: {candidate}")
+    return relative.parts
+
+
+@contextmanager
+def _private_directory_fd(path: Path, *, create: bool = False):
+    """Yield an anchored descriptor for a private directory below the bridge."""
+    parts = _runtime_relative_parts(path)
+    fd = _open_bridge_root()
+    try:
+        for component in parts:
+            if create:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+            try:
+                next_fd = os.open(component, _DIR_OPEN_FLAGS, dir_fd=fd)
+            except OSError as exc:
+                raise UnsafeRuntimePath(f"unsafe runtime directory {path}: {exc}") from exc
+            os.close(fd)
+            fd = next_fd
+            _validate_private_directory(fd, str(path))
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _validate_regular_file(fd: int, label: str, *, private: bool = False) -> os.stat_result:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UnsafeRuntimePath(f"{label} is not a regular file")
+    if metadata.st_uid != os.getuid():
+        raise UnsafeRuntimePath(f"{label} is not owned by the current user")
+    if private and stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise UnsafeRuntimePath(f"{label} must not have group/world permissions")
+    return metadata
+
+
+def _stat_regular_at(directory_fd: int, name: str, *, private: bool = False) -> os.stat_result:
+    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    if not stat.S_ISREG(metadata.st_mode):
+        raise UnsafeRuntimePath(f"{name} is not a regular file")
+    if metadata.st_uid != os.getuid():
+        raise UnsafeRuntimePath(f"{name} is not owned by the current user")
+    if private and stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise UnsafeRuntimePath(f"{name} must not have group/world permissions")
+    return metadata
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-def _ensure_private_directory(path: Path) -> None:
-    path.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(path, 0o700)
+def _rotate_log(control_fd: int) -> None:
+    try:
+        current = _stat_regular_at(control_fd, LOG_PATH.name, private=True)
+    except FileNotFoundError:
+        return
+    if current.st_size < LOG_MAX_BYTES:
+        return
+
+    oldest = f"{LOG_PATH.name}.{LOG_BACKUP_COUNT}"
+    try:
+        _stat_regular_at(control_fd, oldest, private=True)
+    except FileNotFoundError:
+        pass
+    else:
+        os.unlink(oldest, dir_fd=control_fd)
+
+    for index in range(LOG_BACKUP_COUNT - 1, 0, -1):
+        source = f"{LOG_PATH.name}.{index}"
+        destination = f"{LOG_PATH.name}.{index + 1}"
+        try:
+            _stat_regular_at(control_fd, source, private=True)
+        except FileNotFoundError:
+            continue
+        try:
+            _stat_regular_at(control_fd, destination, private=True)
+        except FileNotFoundError:
+            pass
+        os.replace(
+            source,
+            destination,
+            src_dir_fd=control_fd,
+            dst_dir_fd=control_fd,
+        )
+
+    os.replace(
+        LOG_PATH.name,
+        f"{LOG_PATH.name}.1",
+        src_dir_fd=control_fd,
+        dst_dir_fd=control_fd,
+    )
 
 
 def log(msg: str) -> None:
     try:
-        _ensure_private_directory(LOG_PATH.parent)
-        if LOG_PATH.exists() and LOG_PATH.stat().st_size >= LOG_MAX_BYTES:
-            oldest = LOG_PATH.with_name(f"{LOG_PATH.name}.{LOG_BACKUP_COUNT}")
-            oldest.unlink(missing_ok=True)
-            for index in range(LOG_BACKUP_COUNT - 1, 0, -1):
-                source = LOG_PATH.with_name(f"{LOG_PATH.name}.{index}")
-                if source.exists():
-                    destination = LOG_PATH.with_name(f"{LOG_PATH.name}.{index + 1}")
-                    source.replace(destination)
-                    os.chmod(destination, 0o600)
-            first_archive = LOG_PATH.with_name(f"{LOG_PATH.name}.1")
-            LOG_PATH.replace(first_archive)
-            os.chmod(first_archive, 0o600)
-        fd = os.open(LOG_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
-        os.chmod(LOG_PATH, 0o600)
-        with os.fdopen(fd, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}\n")
+        with _private_directory_fd(LOG_PATH.parent, create=True) as control_fd:
+            _rotate_log(control_fd)
+            fd = os.open(
+                LOG_PATH.name,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND | _FILE_NOFOLLOW_FLAGS,
+                0o600,
+                dir_fd=control_fd,
+            )
+            try:
+                _validate_regular_file(fd, str(LOG_PATH), private=True)
+                with os.fdopen(fd, "a", encoding="utf-8") as f:
+                    fd = -1
+                    f.write(f"[{datetime.now().isoformat(timespec='seconds')}] {msg}\n")
+            finally:
+                if fd >= 0:
+                    os.close(fd)
     except Exception:
         pass
 
@@ -1344,36 +1487,97 @@ def write_response(req_filename_stem: str, data: dict) -> None:
     """Write response JSON atomically. Uses the request filename stem to
     derive the response filename, never trusting JSON id for the path.
     """
-    _ensure_private_directory(RESPONSES_DIR)
-    path = RESPONSES_DIR / f"response-{req_filename_stem}.json"
-    tmp = RESPONSES_DIR / f".{path.name}.{uuid.uuid4().hex}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
-        os.chmod(path, 0o600)
-    finally:
+    if not req_filename_stem or "/" in req_filename_stem or req_filename_stem in (".", ".."):
+        raise ValueError("invalid response filename stem")
+    name = f"response-{req_filename_stem}.json"
+    tmp = f".{name}.{uuid.uuid4().hex}.tmp"
+    with _private_directory_fd(RESPONSES_DIR, create=True) as responses_fd:
+        fd = os.open(
+            tmp,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _FILE_NOFOLLOW_FLAGS,
+            0o600,
+            dir_fd=responses_fd,
+        )
         try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+            _validate_regular_file(fd, tmp, private=True)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = -1
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, name, src_dir_fd=responses_fd, dst_dir_fd=responses_fd)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(tmp, dir_fd=responses_fd)
+            except FileNotFoundError:
+                pass
 
 
 def reap_expired_responses() -> None:
     """Remove response payloads that the host failed to consume promptly."""
     now = time.time()
-    if not RESPONSES_DIR.exists():
-        return
-    for path in RESPONSES_DIR.glob("response-*.json"):
-        try:
-            if now - path.stat().st_mtime > RESPONSE_TTL_S:
-                path.unlink(missing_ok=True)
-        except OSError as e:
-            log(f"response reaper could not remove {path.name}: {e}")
+    try:
+        with _private_directory_fd(RESPONSES_DIR) as responses_fd:
+            for name in os.listdir(responses_fd):
+                if not (name.startswith("response-") and name.endswith(".json")):
+                    continue
+                try:
+                    # Legacy releases may have left broader file modes. The
+                    # containing directory is private; unlinking a verified
+                    # regular, current-user-owned file does not follow it.
+                    metadata = _stat_regular_at(responses_fd, name)
+                    if now - metadata.st_mtime > RESPONSE_TTL_S:
+                        os.unlink(name, dir_fd=responses_fd)
+                except (OSError, UnsafeRuntimePath) as e:
+                    log(f"response reaper could not remove {name}: {e}")
+    except UnsafeRuntimePath as e:
+        if isinstance(e.__cause__, FileNotFoundError):
+            return
+        raise
 
 
-def process_request(req_path: Path, privacy_policy: PrivacyPolicy | list[str]) -> None:
+def _read_request_text(req_path: Path, requests_fd: int | None) -> str:
+    if requests_fd is None:
+        fd = os.open(req_path, os.O_RDONLY | _FILE_NOFOLLOW_FLAGS)
+    else:
+        fd = os.open(
+            req_path.name,
+            os.O_RDONLY | _FILE_NOFOLLOW_FLAGS,
+            dir_fd=requests_fd,
+        )
+    try:
+        metadata = _validate_regular_file(fd, str(req_path))
+        if metadata.st_size > MAX_REQUEST_BYTES:
+            raise ValueError(f"request exceeds {MAX_REQUEST_BYTES} byte limit")
+        chunks: list[bytes] = []
+        remaining = MAX_REQUEST_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, min(remaining, 8192))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > MAX_REQUEST_BYTES:
+            raise ValueError(f"request exceeds {MAX_REQUEST_BYTES} byte limit")
+        return raw.decode("utf-8")
+    finally:
+        os.close(fd)
+
+
+def _bad_request(req_stem: str, error: str, *, req_id: str | None = None) -> None:
+    response: dict[str, Any] = {"ok": False, "error": error}
+    if req_id is not None:
+        response["id"] = req_id
+    write_response(req_stem, response)
+
+
+def process_request(
+    req_path: Path,
+    privacy_policy: PrivacyPolicy | list[str],
+    *,
+    requests_fd: int | None = None,
+) -> None:
     # Derive safe response filename from request filename stem only.
     # Never use JSON id field for filesystem paths — it could contain slashes.
     req_stem = req_path.stem.replace("request-", "")
@@ -1388,24 +1592,38 @@ def process_request(req_path: Path, privacy_policy: PrivacyPolicy | list[str]) -
         return
 
     try:
-        raw = req_path.read_text(encoding="utf-8")
-        data = json.loads(raw)
+        raw = _read_request_text(req_path, requests_fd)
     except Exception as e:
-        # On parse failure, wait briefly and retry once in case file is still
-        # being written (despite atomic write requirement).
+        _bad_request(req_stem, f"bad request file: {e}")
+        return
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        # Preserve compatibility with non-atomic clients by retrying malformed
+        # JSON once. Secure descriptor-relative opens still reject symlinks.
         time.sleep(0.1)
         try:
-            raw = req_path.read_text(encoding="utf-8")
+            raw = _read_request_text(req_path, requests_fd)
             data = json.loads(raw)
-        except Exception as e2:
-            # Still broken. Write error response using safe filename stem.
-            write_response(req_stem, {"ok": False, "error": f"bad request JSON: {e2}"})
+        except Exception as e:
+            _bad_request(req_stem, f"bad request JSON: {e}")
             return
+
+    if not isinstance(data, dict):
+        _bad_request(req_stem, "bad request: JSON root must be an object")
+        return
 
     # Echo back the JSON id in response, but never use it for filesystem paths.
     req_id = str(data.get("id", req_stem))
     action = data.get("action")
-    params = data.get("params", {}) or {}
+    params = data.get("params", {})
+
+    if not isinstance(action, str):
+        _bad_request(req_stem, "bad request: action must be a string", req_id=req_id)
+        return
+    if not isinstance(params, dict):
+        _bad_request(req_stem, "bad request: params must be an object", req_id=req_id)
+        return
 
     if action not in ACTIONS:
         write_response(req_stem, {
@@ -1447,9 +1665,9 @@ def process_request(req_path: Path, privacy_policy: PrivacyPolicy | list[str]) -
 
 
 def main() -> None:
-    _ensure_private_directory(LOG_PATH.parent)
-    _ensure_private_directory(REQUESTS_DIR)
-    _ensure_private_directory(RESPONSES_DIR)
+    for path in (LOG_PATH.parent, REQUESTS_DIR, RESPONSES_DIR):
+        with _private_directory_fd(path, create=True):
+            pass
     privacy_policy = load_privacy_policy()
 
     reap_expired_responses()
@@ -1463,19 +1681,32 @@ def main() -> None:
         log(f"reap_expired_nonces error: {e!r}")
 
     # Only process complete request files (*.json, not temp/partial suffixes).
-    pending = sorted(REQUESTS_DIR.glob("request-*.json"))
-    if not pending:
-        # launchd sometimes fires with no new file (e.g. directory-touch).
-        return
+    with _private_directory_fd(REQUESTS_DIR) as requests_fd:
+        pending = sorted(
+            name
+            for name in os.listdir(requests_fd)
+            if name.startswith("request-") and name.endswith(".json")
+        )
+        if not pending:
+            # launchd sometimes fires with no new file (e.g. directory-touch).
+            return
 
-    for p in pending:
-        try:
-            process_request(p, privacy_policy)
-        finally:
+        for name in pending:
+            request = Path(name)
+            req_stem = request.stem.replace("request-", "")
             try:
-                p.unlink()
+                process_request(request, privacy_policy, requests_fd=requests_fd)
             except Exception as e:
-                log(f"could not unlink {p.name}: {e}")
+                log(f"request={name} unhandled error: {e!r}")
+                try:
+                    _bad_request(req_stem, f"request processing failed: {e}")
+                except Exception as response_error:
+                    log(f"request={name} could not write error response: {response_error!r}")
+            finally:
+                try:
+                    os.unlink(name, dir_fd=requests_fd)
+                except Exception as e:
+                    log(f"could not unlink {name}: {e}")
 
 
 if __name__ == "__main__":

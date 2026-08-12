@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+import stat
 import struct
 import tempfile
 import time
@@ -114,7 +116,7 @@ class SendGateTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-nonce-test-")
         self.addCleanup(self._tmp.cleanup)
         self._old_bridge = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
@@ -125,6 +127,10 @@ class SendGateTests(unittest.TestCase):
 
     def test_nonce_round_trip_and_replay_rejection(self) -> None:
         nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+        nonce_path = (
+            Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces" / f"{nonce}.json"
+        )
+        self.assertEqual(stat.S_IMODE(nonce_path.stat().st_mode), 0o600)
         helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
         with self.assertRaises(helper.SendGateError):
             helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
@@ -136,6 +142,23 @@ class SendGateTests(unittest.TestCase):
         with self.assertRaises(helper.SendGateError):
             helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
 
+    def test_malformed_expiry_burns_nonce(self) -> None:
+        nonce_dir = Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces"
+        for expires_at in ("later", float("nan"), True):
+            with self.subTest(expires_at=expires_at):
+                nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+                path = nonce_dir / f"{nonce}.json"
+                record = json.loads(path.read_text())
+                record["expires_at"] = expires_at
+                path.write_text(json.dumps(record))
+                path.chmod(0o600)
+
+                with self.assertRaisesRegex(helper.SendGateError, "malformed nonce record"):
+                    helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
+
+                self.assertFalse(path.exists())
+                self.assertFalse((nonce_dir / f"{nonce}.claimed").exists())
+
     def test_reaper_preserves_fresh_malformed_and_removes_stale_files(self) -> None:
         nonce_dir = Path(self._tmp.name) / "nonces"
         nonce_dir.mkdir(mode=0o700)
@@ -144,6 +167,7 @@ class SendGateTests(unittest.TestCase):
         claimed = nonce_dir / "stale.claimed"
         for path in (fresh, stale, claimed):
             path.write_text("{")
+            path.chmod(0o600)
         old = time.time() - helper.SEND_NONCE_TTL - 10
         os.utime(stale, (old, old))
         os.utime(claimed, (old, old))
@@ -153,6 +177,18 @@ class SendGateTests(unittest.TestCase):
         self.assertTrue(fresh.exists())
         self.assertFalse(stale.exists())
         self.assertFalse(claimed.exists())
+
+    def test_nonce_store_rejects_symlinked_directory(self) -> None:
+        bridge = Path(os.path.realpath(self._tmp.name))
+        victim = bridge / "victim-dir"
+        victim.mkdir(mode=0o755)
+        (bridge / "nonces").symlink_to(victim, target_is_directory=True)
+
+        with self.assertRaises(RuntimeError):
+            helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+
+        self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+        self.assertEqual(list(victim.iterdir()), [])
 
 
 if __name__ == "__main__":

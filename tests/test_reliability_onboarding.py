@@ -5,6 +5,7 @@ import os
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -88,11 +89,85 @@ class StatusContractTests(unittest.TestCase):
         self.assertTrue(result["checks"]["chat_db_exists"])
         self.assertNotIn("text", json.dumps(result))
 
+    def test_bad_requests_do_not_interrupt_queue(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-request-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            requests = control / "requests"
+            responses = control / "responses"
+            for directory in (control, requests, responses):
+                directory.mkdir(mode=0o700)
+            log = control / "log.txt"
+            log.write_text("")
+            log.chmod(0o600)
+
+            payloads = {
+                "01-list": [],
+                "02-action": {"id": "bad-action", "action": [], "params": {}},
+                "03-params": {"id": "bad-params", "action": "status", "params": []},
+                "04-large": {
+                    "id": "large",
+                    "action": "status",
+                    "params": {},
+                    "padding": "x" * (64 * 1024),
+                },
+                "06-status": {"id": "status", "action": "status", "params": {}},
+            }
+            for name, payload in payloads.items():
+                (requests / f"request-{name}.json").write_text(json.dumps(payload))
+            os.mkfifo(requests / "request-05-fifo.json", mode=0o600)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "REQUESTS_DIR", requests
+            ), mock.patch.object(helper, "RESPONSES_DIR", responses), mock.patch.object(
+                helper, "LOG_PATH", log
+            ), mock.patch.object(helper, "load_privacy_policy", return_value=[]), mock.patch.object(
+                helper, "reap_expired_nonces"
+            ):
+                helper.main()
+
+            for name in ("01-list", "02-action", "03-params", "04-large", "05-fifo"):
+                response = json.loads((responses / f"response-{name}.json").read_text())
+                self.assertFalse(response["ok"], name)
+            status = json.loads((responses / "response-06-status.json").read_text())
+            self.assertTrue(status["ok"])
+            self.assertEqual(list(requests.iterdir()), [])
+
+    def test_request_symlink_is_rejected_without_reading_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-request-symlink-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            requests = control / "requests"
+            responses = control / "responses"
+            for directory in (control, requests, responses):
+                directory.mkdir(mode=0o700)
+            log = control / "log.txt"
+            log.write_text("")
+            log.chmod(0o600)
+            victim = bridge / "victim.json"
+            victim.write_text(json.dumps({"id": "victim", "action": "status", "params": {}}))
+            (requests / "request-linked.json").symlink_to(victim)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "REQUESTS_DIR", requests
+            ), mock.patch.object(helper, "RESPONSES_DIR", responses), mock.patch.object(
+                helper, "LOG_PATH", log
+            ), mock.patch.object(helper, "load_privacy_policy", return_value=[]), mock.patch.object(
+                helper, "reap_expired_nonces"
+            ):
+                helper.main()
+
+            response = json.loads((responses / "response-linked.json").read_text())
+            self.assertFalse(response["ok"])
+            self.assertEqual(json.loads(victim.read_text())["id"], "victim")
+
 
 class DoctorTests(unittest.TestCase):
     def test_doctor_json_reports_actionable_failures(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-doctor-test-") as td:
-            bridge = Path(td) / "bridge"
+            bridge = Path(os.path.realpath(td)) / "bridge"
             result = subprocess.run(
                 [
                     "python3",
@@ -118,7 +193,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_doctor_json_passes_for_synthetic_install(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-doctor-test-") as td:
-            bridge = Path(td) / "bridge"
+            bridge = Path(os.path.realpath(td)) / "bridge"
             for directory in (
                 bridge / "bin",
                 bridge / "control" / "requests",
@@ -171,6 +246,124 @@ class DoctorTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(json.loads(result.stdout)["ok"])
+
+    def test_doctor_rejects_symlinked_bridge_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-doctor-symlink-test-") as td:
+            root = Path(os.path.realpath(td))
+            real_parent = root / "real-parent"
+            real_parent.mkdir(mode=0o700)
+            bridge = real_parent / "bridge"
+            bridge.mkdir(mode=0o700)
+            linked_parent = root / "linked-parent"
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "doctor.py"),
+                    "--bridge",
+                    str(linked_parent / "bridge"),
+                    "--json",
+                    "--skip-grok",
+                    "--skip-launchd",
+                    "--skip-codesign",
+                    "--skip-chat-db",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["checks"]["bridge_root"]["status"], "fail")
+
+    def test_doctor_preserves_dotdot_while_checking_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-doctor-dotdot-test-") as td:
+            root = Path(os.path.realpath(td))
+            real_parent = root / "real-parent"
+            (real_parent / "child").mkdir(parents=True, mode=0o700)
+            bridge = real_parent / "bridge"
+            bridge.mkdir(mode=0o700)
+            link = root / "linked-child"
+            link.symlink_to(real_parent / "child", target_is_directory=True)
+            supplied = link / ".." / "bridge"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "doctor.py"),
+                    "--bridge",
+                    str(supplied),
+                    "--json",
+                    "--skip-grok",
+                    "--skip-launchd",
+                    "--skip-codesign",
+                    "--skip-chat-db",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertEqual(report["bridge"], str(supplied))
+        self.assertEqual(report["checks"]["bridge_root"]["status"], "fail")
+
+    def test_doctor_rejects_symlinked_code_subdirectory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-doctor-code-symlink-test-") as td:
+            root = Path(os.path.realpath(td))
+            bridge = root / "bridge"
+            for directory in (
+                bridge / "control" / "requests",
+                bridge / "control" / "responses",
+                bridge / "contacts",
+            ):
+                directory.mkdir(parents=True, mode=0o700)
+            bridge.chmod(0o700)
+            real_bin = root / "real-bin"
+            real_bin.mkdir(mode=0o700)
+            for name, file_mode in (
+                ("helper.py", 0o500),
+                ("send_gate.py", 0o500),
+                ("cowork-imessage-helper", 0o700),
+                ("confirm-imessage-send", 0o700),
+            ):
+                path = real_bin / name
+                path.write_text("fixture")
+                path.chmod(file_mode)
+            (bridge / "bin").symlink_to(real_bin, target_is_directory=True)
+            for name, contents in (
+                ("blocked_chats.txt", ""),
+                ("allowed_chats.txt", ""),
+                ("read_policy.txt", "blocklist\n"),
+            ):
+                path = bridge / "contacts" / name
+                path.write_text(contents)
+                path.chmod(0o600)
+            log = bridge / "control" / "log.txt"
+            log.write_text("")
+            log.chmod(0o600)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "tools" / "doctor.py"),
+                    "--bridge",
+                    str(bridge),
+                    "--json",
+                    "--skip-grok",
+                    "--skip-launchd",
+                    "--skip-codesign",
+                    "--skip-chat-db",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        report = json.loads(result.stdout)
+        self.assertEqual(report["checks"]["helper_source"]["status"], "fail")
+        self.assertEqual(report["checks"]["fda_wrapper"]["status"], "fail")
 
 
 class SkillInstallTests(unittest.TestCase):
