@@ -5,7 +5,7 @@
 #   1. Sanity-checks that we're on macOS with the Xcode Command Line Tools
 #      installed (for clang + codesign).
 #   2. Creates control/requests, control/responses, and contacts/ if missing.
-#   3. chmod 500 bin/helper.py so the wrapper won't refuse to exec it.
+#   3. Locks down the Python worker and send-gate module.
 #   4. Compiles the FDA wrapper and native send-confirmation helper.
 #   5. Ad-hoc code-signs the wrapper so macOS can give FDA a stable identity
 #      to attach to. Re-signing on content-identical rebuilds keeps the grant.
@@ -31,6 +31,7 @@ BIN_DIR="$INSTALL_ROOT/bin"
 CONTROL_DIR="$INSTALL_ROOT/control"
 CONTACTS_DIR="$INSTALL_ROOT/contacts"
 HELPER_PY="$BIN_DIR/helper.py"
+SEND_GATE_PY="$BIN_DIR/send_gate.py"
 WRAPPER_SRC="$BIN_DIR/cowork_imessage_helper.c"
 WRAPPER_BIN="$BIN_DIR/cowork-imessage-helper"
 CONFIRM_SRC="$BIN_DIR/confirm_imessage_send.m"
@@ -82,6 +83,10 @@ if [[ ! -f "$HELPER_PY" ]]; then
     red "Missing $HELPER_PY"
     exit 1
 fi
+if [[ ! -f "$SEND_GATE_PY" ]]; then
+    red "Missing $SEND_GATE_PY"
+    exit 1
+fi
 if [[ ! -f "$CONFIRM_SRC" ]]; then
     red "Missing $CONFIRM_SRC"
     exit 1
@@ -95,6 +100,10 @@ if [[ "$INSTALL_GROK_SKILL" == "1" && \
     red "Missing SKILL.md or executable install-skill.sh"
     exit 1
 fi
+if [[ ! -f "$INSTALL_ROOT/contacts/allowed_chats.txt.template" ]]; then
+    red "Missing allowlist template at contacts/allowed_chats.txt.template"
+    exit 1
+fi
 
 bold "Grok Bot iMessage helper installer"
 echo "  install root : $INSTALL_ROOT"
@@ -106,7 +115,8 @@ echo
 # ---- 2. control / contacts directories -----------------------------------
 mkdir -p "$CONTROL_DIR/requests" "$CONTROL_DIR/responses" "$CONTACTS_DIR"
 touch "$CONTROL_DIR/log.txt"
-chmod 700 "$CONTROL_DIR" "$CONTROL_DIR/requests" "$CONTROL_DIR/responses" "$CONTACTS_DIR"
+chmod 700 "$INSTALL_ROOT" "$CONTROL_DIR" "$CONTROL_DIR/requests" \
+    "$CONTROL_DIR/responses" "$CONTACTS_DIR"
 chmod 600 "$CONTROL_DIR/log.txt"
 
 if [[ ! -f "$CONTACTS_DIR/blocked_chats.txt" ]]; then
@@ -131,9 +141,22 @@ EOF
     green "  created $CONTACTS_DIR/blocked_chats.txt (empty)"
 fi
 
-# ---- 3. lock down helper.py ----------------------------------------------
-chmod 500 "$HELPER_PY"
-green "  chmod 500 $HELPER_PY"
+if [[ ! -f "$CONTACTS_DIR/allowed_chats.txt" ]]; then
+    cp "$INSTALL_ROOT/contacts/allowed_chats.txt.template" \
+        "$CONTACTS_DIR/allowed_chats.txt"
+    chmod 600 "$CONTACTS_DIR/allowed_chats.txt"
+    green "  created $CONTACTS_DIR/allowed_chats.txt (empty)"
+fi
+
+if [[ ! -f "$CONTACTS_DIR/read_policy.txt" ]]; then
+    printf 'blocklist\n' > "$CONTACTS_DIR/read_policy.txt"
+    chmod 600 "$CONTACTS_DIR/read_policy.txt"
+    green "  created $CONTACTS_DIR/read_policy.txt (blocklist)"
+fi
+
+# ---- 3. lock down Python code --------------------------------------------
+chmod 500 "$HELPER_PY" "$SEND_GATE_PY"
+green "  chmod 500 $HELPER_PY and $SEND_GATE_PY"
 
 # ---- 4. build wrapper binary --------------------------------------------
 bold "Building wrapper binary..."
@@ -145,6 +168,9 @@ fi
 
 clang -Wall -Wextra -Werror -O2 \
     -DHELPER_SCRIPT="\"$HELPER_PY\"" \
+    -DSEND_GATE_SCRIPT="\"$SEND_GATE_PY\"" \
+    -DCONFIRM_HELPER="\"$CONFIRM_BIN\"" \
+    -DBRIDGE_ROOT="\"$INSTALL_ROOT\"" \
     -DPYTHON_INTERPRETER="\"$PYTHON3_PATH\"" \
     -o "$WRAPPER_BIN" "$WRAPPER_SRC"
 chmod 700 "$WRAPPER_BIN"
@@ -172,19 +198,20 @@ echo "  cdhash: ${CDHASH:-unknown}"
 mkdir -p "$(dirname "$PLIST_DEST")"
 
 # Use Python to generate the plist with proper XML escaping instead of sed.
-python3 - "$INSTALL_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
+python3 - "$INSTALL_ROOT" "$INSTALL_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
 import sys, xml.etree.ElementTree as ET
 
-install_root, dest, template = sys.argv[1], sys.argv[2], sys.argv[3]
+code_root, bridge_root, dest, template = sys.argv[1:]
 
 # Read template and replace placeholder with properly escaped path.
 tree = ET.parse(template)
 root = tree.getroot()
 
-# Find all <string> elements and replace the placeholder.
+# Find all <string> elements and replace the path placeholders.
 for elem in root.iter("string"):
-    if elem.text and "{{INSTALL_ROOT}}" in elem.text:
-        elem.text = elem.text.replace("{{INSTALL_ROOT}}", install_root)
+    if elem.text:
+        elem.text = elem.text.replace("{{CODE_ROOT}}", code_root)
+        elem.text = elem.text.replace("{{BRIDGE_ROOT}}", bridge_root)
 
 tree.write(dest, encoding="UTF-8", xml_declaration=True)
 PYGEN

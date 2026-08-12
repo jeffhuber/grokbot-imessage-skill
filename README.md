@@ -46,31 +46,50 @@ git clone https://github.com/jeffhuber/grokbot-imessage-skill.git
 cd grokbot-imessage-skill
 ```
 
-### 2. Choose a bridge folder
+### 2. Choose an installation mode
 
-The helper needs a persistent directory to watch for requests from Grok Bot. You can use this repo's directory, or create a dedicated folder like `~/imessage-bridge`.
-
-**Example using this repo:**
+**Hardened install (recommended):**
 
 ```bash
-# Already in the repo directory
-./install.sh
+./install-hardened.sh
 ```
 
-**Or create a dedicated bridge folder:**
+This invokes `sudo` only to install trusted code under a root-owned per-user path,
+`/Library/Application Support/GrokBotIMessage/users/<uid>/libexec`. Requests, responses,
+logs, and nonces remain in your user-owned
+`~/Library/Application Support/GrokBotIMessage` bridge. Reads default to deny;
+allow each phone, email, or group identifier explicitly:
+
+```bash
+CODE_ROOT="/Library/Application Support/GrokBotIMessage/users/$UID/libexec"
+python3 "$CODE_ROOT/tools/configure_allowlist.py" \
+  add +15551234567
+```
+
+The root-owned wrapper validates `helper.py`, `send_gate.py`, the confirmation
+binary, and the root-owned allowlist before inheriting Full Disk Access.
+
+**Standard per-user install:**
+
+Run `./install.sh` to use the repository itself as both code and bridge, or copy
+it to a dedicated folder first:
 
 ```bash
 mkdir ~/imessage-bridge
-cp -r bin/ tools/ SKILL.md install.sh install-skill.sh uninstall.sh \
+cp -r bin/ tools/ contacts/ SKILL.md install.sh install-hardened.sh \
+  install-skill.sh uninstall.sh uninstall-hardened.sh \
   com.user.cowork-imessage.plist.template ~/imessage-bridge/
-cd ~/imessage-bridge
-./install.sh
+cd ~/imessage-bridge && ./install.sh
 ```
 
-The installer will:
+The standard installer does not require `sudo`, but its Python code is writable
+by processes running as your user. Its default `blocklist` policy is intended
+to prevent accidental disclosure, not resist a compromised same-user process.
+
+Both installers:
 - Compile the C wrapper with your install path baked in
 - Compile a native, scrollable send-confirmation window
-- Ad-hoc code-sign the wrapper (for a stable FDA grant)
+- Code-sign locally (ad hoc unless `CODESIGN_IDENTITY` is supplied to the hardened installer)
 - Set up the launchd agent to watch for request files
 - Create `control/requests/`, `control/responses/`, and `contacts/` directories
 - Install the skill under `${GROK_HOME:-~/.grok}/skills/imessage-grok-bot/`
@@ -92,9 +111,9 @@ for the currently supported discovery paths.
 
 Open **System Settings → Privacy & Security → Full Disk Access**, click the `+` button, press **Cmd-Shift-G**, and paste the path printed by the installer:
 
-```
-/path/to/your/bridge-folder/bin/cowork-imessage-helper
-```
+Use the exact wrapper path printed by your installer. For hardened installs it is
+`/Library/Application Support/GrokBotIMessage/users/<uid>/libexec/bin/cowork-imessage-helper`;
+for standard installs it is `<bridge>/bin/cowork-imessage-helper`.
 
 Select it, make sure the toggle is **ON**.
 
@@ -108,7 +127,9 @@ You can verify the grant later under **System Settings → Privacy & Security �
 
 When you first use an iMessage command, Grok Bot will ask: *"Where did you install the iMessage helper?"*
 
-Provide the full path (e.g., `~/imessage-bridge` or the path to this repo). Grok Bot will remember it for the rest of the conversation.
+Provide the full bridge path printed by the installer. The hardened default is
+`~/Library/Application Support/GrokBotIMessage`; a standard install uses the
+folder where you ran `install.sh`.
 
 ---
 
@@ -144,9 +165,17 @@ skills. Skip this check when another host injects `SKILL.md` directly.
 
 **Messages are two-sided.** Every message this helper reads was sent to or from someone else, and they never consented to have their words processed by an LLM. If you use this skill, you're making that choice on their behalf. This is an intrinsic property of giving an AI assistant access to your messages—mentioned here because it's a legitimate concern the README shouldn't bury.
 
-### Blocklist
+### Read Policy
 
-Add sensitive threads to `contacts/blocked_chats.txt` (therapist, attorney, family, etc.). Blocked threads are **dropped before the response JSON is written**, so their text never enters Grok Bot's context.
+The recommended hardened install enforces a root-owned, default-deny allowlist.
+Only listed phone numbers, emails, and group IDs can appear in message or contact
+responses. Manage it with `configure_allowlist.py`; a same-user process cannot
+broaden it without administrator approval.
+
+The standard install uses `contacts/read_policy.txt` (`blocklist` by default).
+Add sensitive threads to `contacts/blocked_chats.txt`. Blocked threads are
+**dropped before response JSON is written**. Set `read_policy.txt` to `allowlist`
+to use the user-editable `contacts/allowed_chats.txt` instead.
 
 Format:
 ```
@@ -157,6 +186,7 @@ chat123456789
 ```
 
 Phone numbers match by last 10 digits. Emails and group IDs match case-insensitively.
+The blocklist always takes precedence, including for sends.
 
 ### Send Gate (Preview-and-Confirm)
 
@@ -188,11 +218,15 @@ See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
   -----------------------             -------------------------
   Writes request-<id>.json  -->  launchd watches control/requests/  -->
   Reads  response-<id>.json  <-- cowork-imessage-helper (wrapper)   -->
-                                 helper.py (FDA-granted, reads chat.db)
+                                 root-owned helper.py in hardened mode
+                                 (FDA-granted, reads chat.db)
                                  confirm-imessage-send (native approval UI)
 ```
 
-Grok Bot runs in an environment that can execute shell commands on your Mac. The helper is a launchd agent that watches a **bridge folder** for JSON request files. When Grok Bot writes a request, launchd fires the helper, which reads the Messages database, processes the request, and writes a JSON response back—where Grok Bot can then read it.
+Grok Bot runs in an environment that can execute shell commands on your Mac. The
+helper is a LaunchAgent that watches a user-owned **bridge folder**. In hardened
+mode, executable code is a separate root-owned tree; only queues and runtime
+state are writable by the user or host.
 
 Sending uses the **same** request/response bridge. Grok Bot writes a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI scripting or automated clicks; sends require a native confirmation dialog click—just a short-lived subprocess plus human approval.
 
@@ -280,7 +314,7 @@ python3 tools/doctor.py --bridge "/path/to/your/bridge-folder"
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| No response files appear | FDA not granted | Grant FDA to `<bridge>/bin/cowork-imessage-helper` in System Settings |
+| No response files appear | FDA not granted | Grant FDA to the exact wrapper path printed by the installer |
 | `sqlite3.OperationalError` in logs | FDA not granted or stale | Re-add the wrapper in System Settings → Full Disk Access |
 | Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
 | `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
@@ -292,9 +326,8 @@ Check `<bridge>/control/log.txt` first when debugging.
 
 ## Uninstalling
 
-```bash
-./uninstall.sh
-```
+Use `./uninstall-hardened.sh` for a hardened install or `./uninstall.sh` for a
+standard install. Both preserve runtime data until you deliberately delete it.
 
 This removes the launchd agent. To fully remove:
 - Delete the bridge folder.
@@ -305,8 +338,8 @@ The uninstaller also removes the user-level `imessage-grok-bot` skill installed 
 
 ## Upgrading
 
-Pull or unpack the new source, review `CHANGELOG.md`, then rerun `./install.sh`
-from the bridge folder. The installer rebuilds and re-signs the native binaries,
+Pull or unpack the new source, review `CHANGELOG.md`, then rerun the same installer
+you originally chose. The installer rebuilds and re-signs the native binaries,
 restarts the LaunchAgent, and refreshes the discovered skill. Recheck Full Disk
 Access if macOS no longer recognizes the rebuilt wrapper, then run:
 
@@ -314,8 +347,13 @@ Access if macOS no longer recognizes the rebuilt wrapper, then run:
 python3 tools/doctor.py --bridge "$PWD"
 ```
 
+For hardened installs, use the full command printed by `install-hardened.sh`,
+including `--code-root`.
+
 Tagged releases include `SHA256SUMS`; verify an archive with
 `shasum -a 256 -c SHA256SUMS` before installation.
+Release archives are source-only and are not notarized; see
+[`docs/SIGNING.md`](./docs/SIGNING.md) for the exact trust model.
 
 ---
 
