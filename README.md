@@ -291,6 +291,7 @@ Messages' live WAL. The source is opened read-only without `immutable=1`:
 SQLite [defines that flag](https://sqlite.org/uri.html#uriimmutable) as an
 assertion that a database cannot change, which is not true while Messages is
 running.
+
 ---
 
 ## Limitations
