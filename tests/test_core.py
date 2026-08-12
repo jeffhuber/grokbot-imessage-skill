@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import stat
 import struct
@@ -136,6 +137,23 @@ class SendGateTests(unittest.TestCase):
             helper.consume_send_nonce(nonce, "+14155551234", "changed", "iMessage")
         with self.assertRaises(helper.SendGateError):
             helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
+
+    def test_malformed_expiry_burns_nonce(self) -> None:
+        nonce_dir = Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces"
+        for expires_at in ("later", float("nan"), True):
+            with self.subTest(expires_at=expires_at):
+                nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
+                path = nonce_dir / f"{nonce}.json"
+                record = json.loads(path.read_text())
+                record["expires_at"] = expires_at
+                path.write_text(json.dumps(record))
+                path.chmod(0o600)
+
+                with self.assertRaisesRegex(helper.SendGateError, "malformed nonce record"):
+                    helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
+
+                self.assertFalse(path.exists())
+                self.assertFalse((nonce_dir / f"{nonce}.claimed").exists())
 
     def test_reaper_preserves_fresh_malformed_and_removes_stale_files(self) -> None:
         nonce_dir = Path(self._tmp.name) / "nonces"

@@ -17,6 +17,7 @@ kept in memory.
 """
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -138,6 +139,14 @@ def _unlink_at(directory_fd: int, name: str) -> None:
         pass
 
 
+def _valid_expiry(value) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
+
+
 def _preview_hash(to: str, body: str, service: str) -> str:
     """Bind a nonce to its exact payload. Null bytes separate fields
     so ``('ab', 'c')`` and ``('a', 'bc')`` don't collide."""
@@ -211,7 +220,11 @@ def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
             _unlink_at(nonce_fd, claimed)
             raise SendGateError(f"malformed nonce record: {e}")
 
-        if int(time.time()) > record.get("expires_at", 0):
+        expires_at = record.get("expires_at", 0)
+        if not _valid_expiry(expires_at):
+            _unlink_at(nonce_fd, claimed)
+            raise SendGateError("malformed nonce record: expires_at must be a finite number")
+        if int(time.time()) > expires_at:
             _unlink_at(nonce_fd, claimed)
             raise SendGateError(
                 f"nonce expired (TTL {SEND_NONCE_TTL}s); call send_preview again"
@@ -257,7 +270,7 @@ def reap_expired_nonces() -> None:
                 try:
                     record = _read_nonce_record(nonce_fd, name)
                     expires_at = record.get("expires_at", 0)
-                    if not isinstance(expires_at, (int, float)) or now > expires_at:
+                    if not _valid_expiry(expires_at) or now > expires_at:
                         _unlink_at(nonce_fd, name)
                 except Exception:
                     if age > grace_period:
