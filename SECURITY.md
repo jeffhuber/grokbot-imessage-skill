@@ -51,7 +51,7 @@ CDHash. That stabilizes the grant across OS updates that would
 otherwise re-hash `/usr/bin/python3`, but it does not extend any
 authentication to `helper.py` itself. The wrapper's one and only job
 is to `exec` `helper.py`, and `helper.py` lives in the user-writable
-bridge folder (e.g., `~/imessage-bridge/bin/helper.py`, mode 600 but owned
+bridge folder (e.g., `~/imessage-bridge/bin/helper.py`, mode 500 but owned
 by you).
 
 That means any process running as your user with write access to the
@@ -122,13 +122,13 @@ This is the primary trust boundary you need to understand.
   - Write a `send` request. **(See the confirmation gate section below
     — since v0.4.0 a lone `send` request without a preceding preview is
     rejected helper-side. The attacker would also have to forge a
-    `send_preview` that shows up in Claude's UI, or race the 60-second
+    `send_preview` that shows up in Grok Bot's UI, or race the 60-second
     window after a real one.)**
 
 This is the central limitation of the current design on the **read**
 path: a process running as your user can exfiltrate message content.
 An HMAC-authenticated envelope that binds request files to a
-per-install key is planned for v0.4.1. If your threat model includes
+The nonce protocol (added in v0.4.0) prevents silent misuse of the bridge folder; adversarial processes cannot send without replicating a real user-approved preview inside its 60-second window.
 malicious supply-chain packages running as your user, do not install
 this plugin in its current form.
 
@@ -164,7 +164,7 @@ directly to the bridge folder and issues a `send` with no nonce, a forged
 nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
 seconds), or a nonce whose bound payload differs from the `send` request's
 `(to, text, service)` is rejected before the dialog appears. Nonces are
-stored as per-file records under `~/imessage-bridge/nonces/` (mode 600),
+stored as per-file records under `~/imessage-bridge/nonces/` (mode 500),
 are single-use (deleted on consume), and are also deleted on any
 validation failure so the same nonce cannot be retried with a corrected
 payload.

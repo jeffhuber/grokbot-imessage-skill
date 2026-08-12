@@ -19,7 +19,7 @@ LABEL="com.user.cowork-imessage"
 PLIST_DEST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
-    launchctl bootout "gui/$UID/$LABEL" || true
+    launchctl bootout "gui/$UID/$LABEL"
     echo "  launchd agent unloaded"
 fi
 
@@ -36,4 +36,6 @@ To fully remove the helper:
   - Delete this folder.
   - Open System Settings -> Privacy & Security -> Full Disk Access and
     revoke 'cowork-imessage-helper'.
+  - Open System Settings -> Privacy & Security -> Automation and revoke
+    'cowork-imessage-helper -> Messages'.
 EOF

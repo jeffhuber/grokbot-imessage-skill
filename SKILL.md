@@ -36,7 +36,7 @@ Use when the user asks to:
 
 You run in an environment that can execute shell commands on the user's Mac. The iMessage helper is a launchd agent that watches a **bridge folder** for JSON request files. When you write a request, launchd fires the helper, which reads the Messages database, processes the request, and writes a JSON response back—where you can then read it.
 
-Sending goes through the **same** request/response bridge. You write a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI automation, no clicks—just a short-lived subprocess.
+Sending goes through the **same** request/response bridge. You write a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI scripting or automated clicks; sends require a native confirmation dialog click—just a short-lived subprocess plus human approval.
 
 ---
 
@@ -208,7 +208,7 @@ done
 {"id": "abc123", "action": "contacts_lookup", "params": {"name": "Angel"}}
 ```
 
-**Response:** Array of `matches` with `name`, `phone_last10`. Returns up to 25 matches.
+**Response:** Array of `matches` with `name`, and either `phone_last10` or `email`. Returns up to 25 matches.
 
 Useful for disambiguating before `chat_history` or `send`.
 

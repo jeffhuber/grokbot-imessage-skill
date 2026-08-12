@@ -163,7 +163,8 @@ green "  wrote $PLIST_DEST"
 
 # Bootstrap (or restart) the agent.
 if launchctl print "gui/$UID/$LAUNCHCTL_LABEL" >/dev/null 2>&1; then
-    launchctl bootout "gui/$UID/$LAUNCHCTL_LABEL" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$UID/$LAUNCHCTL_LABEL"
+    echo "  existing agent unloaded"
 fi
 launchctl bootstrap "gui/$UID" "$PLIST_DEST"
 launchctl enable "gui/$UID/$LAUNCHCTL_LABEL"

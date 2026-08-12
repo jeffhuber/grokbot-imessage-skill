@@ -299,7 +299,7 @@ Computes reply-time statistics over the specified window.
 }
 ```
 
-Searches Contacts.app by name. Returns up to 25 matches. The `phone_last10` field contains the last 10 digits of the contact's phone number (for matching against chat identifiers). Useful for disambiguating before `chat_history` or `send`.
+Searches Contacts.app by name. Returns up to 25 matches. Each match contains either `phone_last10` (last 10 digits of phone number) or `email` (email address), depending on the contact's identifier. Useful for disambiguating before `chat_history` or `send`.
 
 ---
 
@@ -421,9 +421,9 @@ Before returning any response that includes message text, the helper runs a rege
 - Credit-card-like digit runs (13–19 digits)
 - US SSN patterns (`NNN-NN-NNNN`)
 
-Redacted content is replaced with `[REDACTED]`.
+Redacted content is replaced with `[REDACTED-2FA]`, `[REDACTED-CARD]`, or `[REDACTED-SSN]` depending on the pattern matched.
 
-**Known gaps** (see `tests/test_redaction.py::RedactionKnownBypasses`):
+**Known gaps:**
 - Dot-separated credit cards (`4111.1111.1111.1111`)
 - PIN-labelled codes (`Your PIN is 4829`)
 - Slash-separated SSNs (`123/45/6789`)

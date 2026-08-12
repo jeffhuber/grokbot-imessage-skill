@@ -65,9 +65,14 @@ The first number is the PID (can be `-` if the agent is loaded but not currently
 ```bash
 BRIDGE="<your-bridge-folder-path>"
 REQ_ID=$(date +%s)
-cat > "$BRIDGE/control/requests/request-$REQ_ID.json" <<EOF
+
+TMP="$BRIDGE/control/requests/.request-$REQ_ID.json.tmp"
+FINAL="$BRIDGE/control/requests/request-$REQ_ID.json"
+
+cat > "$TMP" <<EOF
 {"id": "$REQ_ID", "action": "contacts_lookup", "params": {"name": "test"}}
 EOF
+mv "$TMP" "$FINAL"
 ```
 
 **Poll for the response (max 10 seconds):**
@@ -146,8 +151,9 @@ done
 2. Grok Bot waits for your explicit approval.
 3. You confirm.
 4. Grok Bot runs `send` with the `send_nonce` from the preview.
-5. You see a confirmation: `sent_at` timestamp and resolved recipient name.
-6. The message appears in Messages.app on your Mac as sent.
+5. **The helper displays a native macOS confirmation dialog** showing recipient, service, and message text. You must click **Send** to proceed (or **Cancel** to abort).
+6. You see a confirmation: `sent_at` timestamp and resolved recipient name.
+7. The message appears in Messages.app on your Mac as sent.
 
 **On first send only:** macOS will prompt: *"cowork-imessage-helper wants to control Messages."* Click **OK**. This grants the Automation permission.
 
@@ -167,7 +173,7 @@ tail -n 50 "$BRIDGE/control/log.txt"
 ```
 
 **Expected:**
-- Log lines showing request processing: `INFO: Received action=...`, `INFO: Response written...`
+- Log lines showing request processing and responses.
 - No repeated errors or stack traces.
 
 **If you see errors:**

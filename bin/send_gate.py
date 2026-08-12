@@ -81,7 +81,7 @@ def mint_send_nonce(to: str, body: str, service: str) -> str:
 def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
     """Called from action_send. Raises SendGateError on any failure;
     deletes the nonce on success so it can't be reused.
-    
+
     Atomically claims the nonce file to prevent concurrent double-send races."""
     if not isinstance(nonce, str) or not nonce:
         raise SendGateError("missing nonce; call send_preview first")
@@ -130,10 +130,13 @@ def reap_expired_nonces() -> None:
     matching send (user cancelled, Claude crashed, etc.). Safe to call
     at helper startup. Only reaps files older than TTL or malformed files
     with mtime older than a short grace period to avoid deleting fresh
-    mid-write records."""
+    mid-write records. Also cleans up orphaned .claimed files."""
     now = int(time.time())
     grace_period = 5  # seconds; avoid reaping files being written right now
-    for p in _nonce_dir().glob("*.json"):
+    nonce_dir = _nonce_dir()
+
+    # Reap normal .json nonce files.
+    for p in nonce_dir.glob("*.json"):
         # Skip temp files and claimed files (they're transient).
         if p.name.startswith(".") or p.suffix == ".tmp" or ".claimed" in p.name:
             continue
@@ -153,3 +156,13 @@ def reap_expired_nonces() -> None:
                     p.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    # Reap orphaned .claimed files (helper died after claiming but before sending).
+    for p in nonce_dir.glob("*.claimed"):
+        try:
+            stat = p.stat()
+            # Delete claimed files older than TTL (they're abandoned).
+            if now - stat.st_mtime > SEND_NONCE_TTL:
+                p.unlink(missing_ok=True)
+        except Exception:
+            pass

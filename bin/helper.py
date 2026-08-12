@@ -116,6 +116,11 @@ def log(msg: str) -> None:
 # attributedBody typedstream decoder (pure Python, no PyObjC)
 # Ported from the original Perplexity skill and kept byte-compatible.
 # ---------------------------------------------------------------------------
+def _attributed_fail(data: bytes, reason: str) -> str:
+    log(f"attributedBody parse failed: {reason}; first64={data[:64].hex()}")
+    return ""
+
+
 def decode_attributed_body(blob: bytes | None) -> str:
     if not blob:
         return ""
@@ -143,13 +148,17 @@ def decode_attributed_body(blob: bytes | None) -> str:
         p += 1
 
     if p >= len(data):
-        return ""
+        return _attributed_fail(data, "EOF before length byte")
 
     b0 = data[p]
     if b0 == 0x81:
+        if p + 3 > len(data):
+            return _attributed_fail(data, "truncated <H length")
         length = struct.unpack("<H", data[p + 1 : p + 3])[0]
         p += 3
     elif b0 == 0x82:
+        if p + 5 > len(data):
+            return _attributed_fail(data, "truncated <I length")
         length = struct.unpack("<I", data[p + 1 : p + 5])[0]
         p += 5
     elif b0 < 0x80:
@@ -158,24 +167,26 @@ def decode_attributed_body(blob: bytes | None) -> str:
     else:
         p += 1
         if p >= len(data):
-            return ""
+            return _attributed_fail(data, "EOF in nested length")
         b0 = data[p]
         if b0 == 0x81:
+            if p + 3 > len(data):
+                return _attributed_fail(data, "truncated nested <H length")
             length = struct.unpack("<H", data[p + 1 : p + 3])[0]
             p += 3
         elif b0 < 0x80:
             length = b0
             p += 1
         else:
-            return ""
+            return _attributed_fail(data, f"unrecognized nested length byte {b0:#x}")
 
     if length <= 0 or p + length > len(data):
-        return ""
+        return _attributed_fail(data, f"length {length} exceeds data at p={p}")
 
     try:
         return data[p : p + length].decode("utf-8", errors="replace")
-    except Exception:
-        return ""
+    except Exception as e:
+        return _attributed_fail(data, f"utf-8 decode failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -526,6 +537,10 @@ def validate_search(v: Any) -> str:
     return v
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_PHONE_RE = re.compile(r"^[+0-9().\-\s]+$")
+
+
 def validate_chat(v: Any) -> str:
     if not isinstance(v, str) or not v.strip():
         raise ValueError("chat identifier required")
@@ -535,17 +550,24 @@ def validate_chat(v: Any) -> str:
 
 
 def validate_send_recipient(v: Any) -> str:
-    """Validate a send target. Rejects group chat IDs (chatNNNN) since
-    AppleScript 'buddy' clause only works for individual phone/email handles.
+    """Validate a send target. Accepts only phone numbers and email addresses.
+    Rejects all group chat IDs (any 'chat' prefix).
     """
     identifier = validate_chat(v)
-    # Group chat IDs are not supported for sending.
-    if re.match(r"^chat\d+$", identifier, re.IGNORECASE):
-        raise ValueError(
-            "group chat IDs (chatNNNN) are not supported for sending; "
-            "use individual phone numbers or email addresses"
-        )
-    return identifier
+
+    if identifier.casefold().startswith("chat"):
+        raise ValueError("group chat IDs are not supported for sending; use a phone number or email")
+
+    if "@" in identifier:
+        if not _EMAIL_RE.match(identifier):
+            raise ValueError("send recipient must be a valid email address or phone number")
+        return identifier.strip().lower()
+
+    digits = re.sub(r"\D", "", identifier)
+    if len(digits) >= 10 and _PHONE_RE.match(identifier):
+        return identifier.strip()
+
+    raise ValueError("send recipient must be a valid phone number or email address")
 
 
 def validate_send_text(v: Any) -> str:
@@ -941,9 +963,12 @@ def action_contacts_lookup(params, conn, contacts, blocklist):
         raise ValueError("name must be a 1..100 char string")
     nl = name.lower()
     matches = []
-    for digits, full_name in contacts.items():
+    for handle, full_name in contacts.items():
         if nl in full_name.lower():
-            matches.append({"name": full_name, "phone_last10": digits})
+            if "@" in handle:
+                matches.append({"name": full_name, "email": handle})
+            else:
+                matches.append({"name": full_name, "phone_last10": handle})
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
 
 
@@ -951,13 +976,13 @@ def action_contacts_lookup(params, conn, contacts, blocklist):
 # Send actions (AppleScript-driven)
 # ---------------------------------------------------------------------------
 def _resolve_contact_name(to: str, contacts: dict[str, str]) -> str:
-    """Best-effort name lookup from phone-shaped targets.
+    """Best-effort name lookup from phone or email targets.
 
-    Emails and group-chat IDs return "" — not because we couldn't look
+    Group-chat IDs return "" — not because we couldn't look
     them up, but because the Contacts-side loader keys on normalized
-    10-digit phone numbers only.
+    phone numbers and emails only.
     """
-    key = _last10(to)
+    key = _normalize_handle(to)
     return contacts.get(key, "") if key else ""
 
 

@@ -166,7 +166,7 @@ See **[SECURITY.md](./SECURITY.md)** for full threat-model details.
 
 Grok Bot runs in an environment that can execute shell commands on your Mac. The helper is a launchd agent that watches a **bridge folder** for JSON request files. When Grok Bot writes a request, launchd fires the helper, which reads the Messages database, processes the request, and writes a JSON response back—where Grok Bot can then read it.
 
-Sending uses the **same** request/response bridge. Grok Bot writes a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI automation, no clicks—just a short-lived subprocess.
+Sending uses the **same** request/response bridge. Grok Bot writes a `send_preview` or `send` request, the helper calls `osascript` to drive Messages.app via AppleScript, and the result comes back as JSON. No GUI scripting or automated clicks; sends require a native confirmation dialog click—just a short-lived subprocess plus human approval.
 
 ---
 
@@ -197,9 +197,14 @@ Quick sanity check:
 ```bash
 BRIDGE="/path/to/your/bridge-folder"  # e.g., ~/imessage-bridge
 REQ_ID=$(date +%s)
-cat > "$BRIDGE/control/requests/request-$REQ_ID.json" <<EOF
+
+TMP="$BRIDGE/control/requests/.request-$REQ_ID.json.tmp"
+FINAL="$BRIDGE/control/requests/request-$REQ_ID.json"
+
+cat > "$TMP" <<EOF
 {"id": "$REQ_ID", "action": "contacts_lookup", "params": {"name": "test"}}
 EOF
+mv "$TMP" "$FINAL"
 
 # Poll for response (should appear within 2-5 seconds)
 for i in {1..20}; do
