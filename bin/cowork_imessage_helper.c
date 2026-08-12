@@ -46,7 +46,7 @@
 #endif
 
 #ifndef READ_ALLOWLIST_PATH
-#define READ_ALLOWLIST_PATH ""
+#define READ_ALLOWLIST_PATH BRIDGE_ROOT "/contacts/allowed_chats.txt"
 #endif
 
 #ifndef REQUIRE_ROOT_POLICY
