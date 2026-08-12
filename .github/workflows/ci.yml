@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m py_compile bin/helper.py bin/send_gate.py
+      - run: python -m unittest discover -s tests -v
+      - run: bash -n install.sh
+      - run: bash -n uninstall.sh
+      - run: shellcheck install.sh uninstall.sh
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests -v
+      - run: plutil -lint com.user.cowork-imessage.plist.template
+      - name: Compile FDA wrapper
+        run: >-
+          clang -Wall -Wextra -Werror -O2
+          -DHELPER_SCRIPT='"/tmp/helper.py"'
+          -DPYTHON_INTERPRETER='"/usr/bin/python3"'
+          -fsyntax-only bin/cowork_imessage_helper.c
+      - name: Compile native confirmation helper
+        run: >-
+          clang -Wall -Wextra -Werror -fobjc-arc
+          -framework AppKit -framework Foundation
+          -o /tmp/confirm-imessage-send bin/confirm_imessage_send.m
