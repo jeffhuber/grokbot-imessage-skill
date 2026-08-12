@@ -1,0 +1,17 @@
+# Blocked chats. One entry per line. Lines starting with # are ignored.
+# Matches:
+#   - phone numbers: last 10 digits are compared (e.g. +1-555-123-4567,
+#     5551234567, and (555) 123-4567 all match the same chat).
+#   - email addresses: full case-insensitive match.
+#   - group ids / substrings: anything starting with "chat" or containing
+#     a distinctive substring.
+#
+# Messages from blocked chats are dropped BEFORE the response JSON is
+# written, so their text never enters Grok Bot's context.
+#
+# Add sensitive threads here: therapists, attorneys, family, etc.
+#
+# Examples (remove the # to activate):
+# +15551234567
+# therapist@example.com
+# chat123456789
