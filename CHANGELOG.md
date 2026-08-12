@@ -15,6 +15,10 @@ version reported by the `status` action.
   allowlist.
 - Separate trusted code paths from user-owned request, response, log, and nonce
   state.
+- Anchor runtime filesystem operations to no-follow directory descriptors so
+  the FDA-bearing helper rejects symlinked or permissive bridge paths.
+- Reject oversized or structurally invalid request JSON without interrupting
+  later requests in the queue.
 
 ## 1.0.0 - 2026-08-11
 

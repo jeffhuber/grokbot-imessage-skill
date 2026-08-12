@@ -17,7 +17,7 @@ class BridgeDirMixin:
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-imessage-test-")
         self.addCleanup(self._tmp.cleanup)
         self._old_bridge = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
@@ -143,10 +143,15 @@ class SensitiveArtifactTests(unittest.TestCase):
 
     def test_responses_are_mode_600_and_atomically_written(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-response-test-") as td:
-            response_dir = Path(td) / "responses"
-            response_dir.mkdir(mode=0o755)
-            response_dir.chmod(0o755)
-            with mock.patch.object(helper, "RESPONSES_DIR", response_dir):
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+            response_dir = control / "responses"
+            response_dir.mkdir(mode=0o700)
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "RESPONSES_DIR", response_dir
+            ):
                 helper.write_response("abc123", {"ok": True, "text": "private"})
 
             response = response_dir / "response-abc123.json"
@@ -155,17 +160,20 @@ class SensitiveArtifactTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(response.stat().st_mode), 0o600)
             self.assertEqual(list(response_dir.glob("*.tmp")), [])
 
-    def test_main_hardens_control_and_queue_directories(self) -> None:
+    def test_main_accepts_private_control_and_queue_directories(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-control-test-") as td:
-            control_dir = Path(td) / "control"
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control_dir = bridge / "control"
             requests_dir = control_dir / "requests"
             responses_dir = control_dir / "responses"
             for path in (requests_dir, responses_dir):
-                path.mkdir(parents=True, mode=0o755)
-                path.chmod(0o755)
-            control_dir.chmod(0o755)
+                path.mkdir(parents=True, mode=0o700)
+            control_dir.chmod(0o700)
 
-            with mock.patch.object(helper, "LOG_PATH", control_dir / "log.txt"), mock.patch.object(
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "LOG_PATH", control_dir / "log.txt"
+            ), mock.patch.object(
                 helper, "REQUESTS_DIR", requests_dir
             ), mock.patch.object(helper, "RESPONSES_DIR", responses_dir), mock.patch.object(
                 helper, "load_blocklist", return_value=[]
@@ -178,46 +186,167 @@ class SensitiveArtifactTests(unittest.TestCase):
 
     def test_response_reaper_keeps_fresh_and_removes_stale(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-response-test-") as td:
-            response_dir = Path(td)
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+            response_dir = control / "responses"
+            response_dir.mkdir(mode=0o700)
             fresh = response_dir / "response-fresh.json"
             stale = response_dir / "response-stale.json"
+            legacy = response_dir / "response-legacy.json"
             fresh.write_text("{}")
             stale.write_text("{}")
+            legacy.write_text("{}")
+            fresh.chmod(0o600)
+            stale.chmod(0o600)
+            legacy.chmod(0o644)
             old = time.time() - helper.RESPONSE_TTL_S - 10
             os.utime(stale, (old, old))
+            os.utime(legacy, (old, old))
 
-            with mock.patch.object(helper, "RESPONSES_DIR", response_dir):
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "RESPONSES_DIR", response_dir
+            ):
                 helper.reap_expired_responses()
 
             self.assertTrue(fresh.exists())
             self.assertFalse(stale.exists())
+            self.assertFalse(legacy.exists())
+
+    def test_response_reaper_tolerates_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-response-missing-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "RESPONSES_DIR", control / "responses"
+            ):
+                helper.reap_expired_responses()
 
     def test_log_is_mode_600_and_rotated(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-log-test-") as td:
-            Path(td).chmod(0o755)
-            log_path = Path(td) / "log.txt"
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+            log_path = control / "log.txt"
             log_path.write_text("x" * 32)
-            log_path.chmod(0o644)
-            first_archive = Path(td) / "log.txt.1"
+            log_path.chmod(0o600)
+            first_archive = control / "log.txt.1"
             first_archive.write_text("older")
-            first_archive.chmod(0o644)
-            with mock.patch.object(helper, "LOG_PATH", log_path), mock.patch.object(
+            first_archive.chmod(0o600)
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "LOG_PATH", log_path
+            ), mock.patch.object(
                 helper, "LOG_MAX_BYTES", 16
             ):
                 helper.log("fresh diagnostic")
 
-            self.assertEqual(stat.S_IMODE(Path(td).stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(control.stat().st_mode), 0o700)
             self.assertEqual(stat.S_IMODE(log_path.stat().st_mode), 0o600)
             self.assertIn("fresh diagnostic", log_path.read_text())
             self.assertEqual(first_archive.read_text(), "x" * 32)
             self.assertEqual(stat.S_IMODE(first_archive.stat().st_mode), 0o600)
-            second_archive = Path(td) / "log.txt.2"
+            second_archive = control / "log.txt.2"
             self.assertEqual(second_archive.read_text(), "older")
             self.assertEqual(stat.S_IMODE(second_archive.stat().st_mode), 0o600)
 
     def test_personal_blocklist_is_gitignored(self) -> None:
         gitignore = (REPO_ROOT / ".gitignore").read_text().splitlines()
         self.assertIn("contacts/blocked_chats.txt", gitignore)
+
+    def test_log_rejects_symlinks_without_touching_target(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-log-symlink-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+            victim = bridge / "victim.txt"
+            victim.write_text("unchanged\n")
+            victim.chmod(0o600)
+            (control / "log.txt").symlink_to(victim)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "LOG_PATH", control / "log.txt"
+            ):
+                helper.log("must not follow")
+
+            self.assertEqual(victim.read_text(), "unchanged\n")
+
+    def test_log_rejects_symlinked_runtime_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-dir-symlink-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            victim = bridge / "victim-dir"
+            victim.mkdir(mode=0o755)
+            (bridge / "control").symlink_to(victim, target_is_directory=True)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "LOG_PATH", bridge / "control" / "log.txt"
+            ):
+                helper.log("must not follow")
+
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+            self.assertFalse((victim / "log.txt").exists())
+
+    def test_runtime_directory_permissions_are_not_repaired(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-dir-mode-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o755)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "LOG_PATH", control / "log.txt"
+            ), mock.patch.object(helper, "REQUESTS_DIR", control / "requests"), mock.patch.object(
+                helper, "RESPONSES_DIR", control / "responses"
+            ), self.assertRaises(helper.UnsafeRuntimePath):
+                helper.main()
+
+            self.assertEqual(stat.S_IMODE(control.stat().st_mode), 0o755)
+
+    def test_bridge_root_symlink_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-root-symlink-test-") as td:
+            parent = Path(os.path.realpath(td))
+            victim = parent / "victim"
+            victim.mkdir(mode=0o700)
+            bridge = parent / "bridge"
+            bridge.symlink_to(victim, target_is_directory=True)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), self.assertRaises(
+                helper.UnsafeRuntimePath
+            ):
+                with helper._private_directory_fd(bridge / "control", create=True):
+                    pass
+
+            self.assertEqual(list(victim.iterdir()), [])
+
+    def test_response_writer_rejects_symlinked_directory(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-response-symlink-test-") as td:
+            bridge = Path(os.path.realpath(td))
+            bridge.chmod(0o700)
+            control = bridge / "control"
+            control.mkdir(mode=0o700)
+            victim = bridge / "victim-dir"
+            victim.mkdir(mode=0o755)
+            responses = control / "responses"
+            responses.symlink_to(victim, target_is_directory=True)
+
+            with mock.patch.object(helper, "BRIDGE_ROOT", bridge), mock.patch.object(
+                helper, "RESPONSES_DIR", responses
+            ), self.assertRaises(RuntimeError):
+                helper.write_response("symlink", {"ok": True})
+
+            self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
+            self.assertEqual(list(victim.iterdir()), [])
+
+    def test_launchd_does_not_open_user_controlled_log_path(self) -> None:
+        plist = (REPO_ROOT / "com.user.cowork-imessage.plist.template").read_text()
+        self.assertNotIn("{{BRIDGE_ROOT}}/control/log.txt", plist)
+        self.assertEqual(plist.count("<string>/dev/null</string>"), 2)
 
 
 if __name__ == "__main__":

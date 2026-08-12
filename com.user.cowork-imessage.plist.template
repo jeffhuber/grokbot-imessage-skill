@@ -29,10 +29,10 @@
   <integer>1</integer>
 
   <key>StandardOutPath</key>
-  <string>{{BRIDGE_ROOT}}/control/log.txt</string>
+  <string>/dev/null</string>
 
   <key>StandardErrorPath</key>
-  <string>{{BRIDGE_ROOT}}/control/log.txt</string>
+  <string>/dev/null</string>
 
   <key>RunAtLoad</key>
   <false/>

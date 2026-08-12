@@ -53,7 +53,7 @@ print(module.ALLOWLIST_PATH)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             result.stdout.strip(),
-            str(bridge.resolve() / "contacts" / "allowed_chats.txt"),
+            str(Path(os.path.abspath(bridge)) / "contacts" / "allowed_chats.txt"),
         )
 
     def test_policy_loader_rejects_directory_paths(self) -> None:
