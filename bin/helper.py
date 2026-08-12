@@ -534,6 +534,20 @@ def validate_chat(v: Any) -> str:
     return v.strip()
 
 
+def validate_send_recipient(v: Any) -> str:
+    """Validate a send target. Rejects group chat IDs (chatNNNN) since
+    AppleScript 'buddy' clause only works for individual phone/email handles.
+    """
+    identifier = validate_chat(v)
+    # Group chat IDs are not supported for sending.
+    if re.match(r"^chat\d+$", identifier, re.IGNORECASE):
+        raise ValueError(
+            "group chat IDs (chatNNNN) are not supported for sending; "
+            "use individual phone numbers or email addresses"
+        )
+    return identifier
+
+
 def validate_send_text(v: Any) -> str:
     """Bounds-check a message body for outbound send.
 
@@ -959,7 +973,7 @@ def action_send_preview(params, conn, contacts, blocklist):
     that skips preview — or swaps the body between preview and send — is
     rejected helper-side.
     """
-    to = validate_chat(params.get("to"))
+    to = validate_send_recipient(params.get("to"))
     text = validate_send_text(params.get("text"))
     service = validate_service(params.get("service"))
 
@@ -990,13 +1004,13 @@ def action_send(params, conn, contacts, blocklist):
     send arbitrary Unicode (including emoji and newlines) unchanged.
 
     Recipient identifiers are escaped inline as AppleScript string literals
-    because they've already passed `validate_chat` (≤200 chars, stripped).
+    because they've already passed `validate_send_recipient` (≤200 chars, stripped).
 
     The `service type` slot is an AppleScript enum, not a string. We pick
     the clause statically from the validated service name so no untrusted
     input is ever interpolated into that slot.
     """
-    to = validate_chat(params.get("to"))
+    to = validate_send_recipient(params.get("to"))
     text = validate_send_text(params.get("text"))
     service = validate_service(params.get("service"))
 
@@ -1022,7 +1036,7 @@ def action_send(params, conn, contacts, blocklist):
     # Truncate message preview to 200 chars for dialog readability.
     preview_text = (text[:200] + "...") if len(text) > 200 else text
     preview_text_escaped = _escape_as_string(preview_text)
-    
+
     dialog_script = (
         f'display dialog "Send {service} to {_escape_as_string(display_to)}?\\n\\n'
         f'{preview_text_escaped}" '
@@ -1030,7 +1044,8 @@ def action_send(params, conn, contacts, blocklist):
         f'with title "Confirm iMessage Send" '
         f'giving up after 60'
     )
-    rc, stdout, stderr = _run_osascript(dialog_script)
+    # Dialog timeout is 60s; pass longer subprocess timeout to avoid killing it early.
+    rc, stdout, stderr = _run_osascript(dialog_script, timeout=70)
     # rc=0 means user clicked Send; rc=1 means Cancel; rc!=0 means timeout or error.
     # stdout contains the button clicked or "gave up:true" on timeout.
     if rc != 0 or "Cancel" in stdout or "gave up:true" in stdout:
@@ -1100,29 +1115,53 @@ ACTIONS = {
 # ---------------------------------------------------------------------------
 # Request / response plumbing
 # ---------------------------------------------------------------------------
-def write_response(req_id: str, data: dict) -> None:
+def write_response(req_filename_stem: str, data: dict) -> None:
+    """Write response JSON atomically. Uses the request filename stem to
+    derive the response filename, never trusting JSON id for the path.
+    """
     RESPONSES_DIR.mkdir(parents=True, exist_ok=True)
-    path = RESPONSES_DIR / f"response-{req_id}.json"
+    path = RESPONSES_DIR / f"response-{req_filename_stem}.json"
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
 
 def process_request(req_path: Path, blocklist: list[str]) -> None:
+    # Derive safe response filename from request filename stem only.
+    # Never use JSON id field for filesystem paths — it could contain slashes.
+    req_stem = req_path.stem.replace("request-", "")
+    if not req_stem:
+        log(f"skipping malformed request filename: {req_path.name}")
+        return
+
+    # Ignore incomplete files: *.tmp, *.partial, names starting with .
+    if (req_path.suffix in (".tmp", ".partial") or
+        req_path.name.startswith(".") or
+        req_path.name.startswith("request-") and not req_path.name.endswith(".json")):
+        return
+
     try:
         raw = req_path.read_text(encoding="utf-8")
         data = json.loads(raw)
     except Exception as e:
-        req_id = req_path.stem.replace("request-", "") or str(uuid.uuid4())
-        write_response(req_id, {"ok": False, "error": f"bad request JSON: {e}"})
-        return
+        # On parse failure, wait briefly and retry once in case file is still
+        # being written (despite atomic write requirement).
+        time.sleep(0.1)
+        try:
+            raw = req_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except Exception as e2:
+            # Still broken. Write error response using safe filename stem.
+            write_response(req_stem, {"ok": False, "error": f"bad request JSON: {e2}"})
+            return
 
-    req_id = str(data.get("id") or req_path.stem.replace("request-", "") or uuid.uuid4())
+    # Echo back the JSON id in response, but never use it for filesystem paths.
+    req_id = str(data.get("id", req_stem))
     action = data.get("action")
     params = data.get("params", {}) or {}
 
     if action not in ACTIONS:
-        write_response(req_id, {
+        write_response(req_stem, {
             "id": req_id,
             "ok": False,
             "error": f"unknown action: {action!r}",
@@ -1147,11 +1186,11 @@ def process_request(req_path: Path, blocklist: list[str]) -> None:
             conn.close()
         result.update({"id": req_id, "action": action, "ok": True,
                        "generated_at": datetime.now().isoformat(timespec="seconds")})
-        write_response(req_id, result)
+        write_response(req_stem, result)
     except Exception as e:
         log(f"action={action} id={req_id} error: {e!r}")
         log(traceback.format_exc())
-        write_response(req_id, {
+        write_response(req_stem, {
             "id": req_id, "action": action, "ok": False, "error": str(e),
         })
     finally:
@@ -1166,12 +1205,13 @@ def main() -> None:
 
     # v0.4.0+: garbage-collect stale send nonces from previews that never
     # got a matching send (user cancelled, Claude crashed). Cheap; touches
-    # only ~/cowork-imessage/nonces/ and only a few files at most.
+    # only ~/imessage-bridge/nonces/ and only a few files at most.
     try:
         reap_expired_nonces()
     except Exception as e:
         log(f"reap_expired_nonces error: {e!r}")
 
+    # Only process complete request files (*.json, not temp/partial suffixes).
     pending = sorted(REQUESTS_DIR.glob("request-*.json"))
     if not pending:
         # launchd sometimes fires with no new file (e.g. directory-touch).

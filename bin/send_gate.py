@@ -59,18 +59,22 @@ def _preview_hash(to: str, body: str, service: str) -> str:
 
 def mint_send_nonce(to: str, body: str, service: str) -> str:
     """Called from action_send_preview. Persists a nonce record and
-    returns the nonce string the client must echo back on send."""
+    returns the nonce string the client must echo back on send.
+    Atomic write via temp file + rename to prevent reap from deleting
+    mid-write records."""
     nonce = secrets.token_urlsafe(24)  # ~32 chars, URL/filename safe
     record = {
         "preview_hash": _preview_hash(to, body, service),
         "expires_at": int(time.time()) + SEND_NONCE_TTL,
     }
-    path = _nonce_dir() / f"{nonce}.json"
-    # O_EXCL so a collision (vanishingly unlikely) raises rather than
-    # silently clobbering. 0o600 so other UIDs can't read the record.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    nonce_dir = _nonce_dir()
+    path = nonce_dir / f"{nonce}.json"
+    tmp = nonce_dir / f".{nonce}.json.tmp"
+    # Write to temp file first, then rename atomically into place.
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump(record, f)
+    os.rename(tmp, path)
     return nonce
 
 
@@ -124,13 +128,28 @@ def consume_send_nonce(nonce, to: str, body: str, service: str) -> None:
 def reap_expired_nonces() -> None:
     """Garbage-collect stale nonce files from previews that never got a
     matching send (user cancelled, Claude crashed, etc.). Safe to call
-    at helper startup."""
+    at helper startup. Only reaps files older than TTL or malformed files
+    with mtime older than a short grace period to avoid deleting fresh
+    mid-write records."""
     now = int(time.time())
+    grace_period = 5  # seconds; avoid reaping files being written right now
     for p in _nonce_dir().glob("*.json"):
+        # Skip temp files and claimed files (they're transient).
+        if p.name.startswith(".") or p.suffix == ".tmp" or ".claimed" in p.name:
+            continue
         try:
+            # Check file mtime; if very fresh, skip it (may be mid-write).
+            stat = p.stat()
+            if now - stat.st_mtime < grace_period:
+                continue
             record = json.loads(p.read_text())
             if now > record.get("expires_at", 0):
                 p.unlink(missing_ok=True)
         except Exception:
-            # malformed or racing with another handler — just drop it
-            p.unlink(missing_ok=True)
+            # Malformed or racing; only delete if not brand-new.
+            try:
+                stat = p.stat()
+                if now - stat.st_mtime > grace_period:
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass

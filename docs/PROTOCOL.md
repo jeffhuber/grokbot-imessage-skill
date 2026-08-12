@@ -467,15 +467,21 @@ Blocked threads are enforced for **both** inbound (read actions) and outbound (`
 ## Typical Request Flow (Pseudocode)
 
 ```python
-import json, uuid, time, pathlib
+import json, uuid, time, pathlib, os
 
 bridge = pathlib.Path("<bridge-folder>")
 req_id = uuid.uuid4().hex[:12]
 
-# Write request
-(bridge / "control" / "requests" / f"request-{req_id}.json").write_text(
+# CRITICAL: Write to temp file first, then rename atomically.
+# Direct write to request-*.json can cause launchd to fire mid-write.
+tmp = bridge / "control" / "requests" / f".request-{req_id}.json.tmp"
+final = bridge / "control" / "requests" / f"request-{req_id}.json"
+
+tmp.write_text(
     json.dumps({"id": req_id, "action": "review", "params": {"days": 2}})
 )
+# Atomic rename publishes the complete request.
+os.rename(tmp, final)
 
 # Poll for response
 resp_path = bridge / "control" / "responses" / f"response-{req_id}.json"
@@ -492,21 +498,24 @@ else:
     print(f"Error: {data['error']}")
 ```
 
+**Why atomic writes matter:** The helper watches `control/requests/` via launchd WatchPaths. If you write directly to `request-*.json`, launchd can fire before the write completes, causing JSON parse errors. Always use temp file + rename.
+
 ---
 
 ## Sending Flow (Preview → Confirm → Send)
 
 **Recommended workflow:**
 
-1. **Resolve the recipient.** If the user provided a name, call `contacts_lookup` first. If multiple matches, surface them and ask. **Note:** Group chat IDs (like `chat123456789`) cannot be used as send targets—only individual phone numbers or email addresses work for sending.
+1. **Resolve the recipient.** If the user provided a name, call `contacts_lookup` first. If multiple matches, surface them and ask. **Note:** Group chat IDs (like `chat123456789`) will be rejected at the preview stage—only individual phone numbers or email addresses work for sending.
 2. **Issue `send_preview`.** Show the user:
    - Resolved recipient name
    - Service (iMessage / SMS)
    - Full text and `text_length`
    - Whether `blocked: true` (if so, stop—don't prompt for approval)
+   - If preview fails with "group chat IDs not supported", the recipient is a group—use an individual contact instead.
 3. **Wait for explicit user approval in the AI chat.** Do not proceed without confirmation.
 4. **Issue `send` with the `send_nonce` from step 2.** The `to`, `text`, and `service` must match the preview exactly.
-5. **The helper will display a native macOS dialog** showing the recipient, service, and message preview. The user must click **Send** in this system dialog to complete the send.
+5. **The helper will display a native macOS dialog** showing the recipient, service, and message preview. The user must click **Send** in this system dialog to complete the send (60-second timeout).
 6. **If the AI chat approval takes >60s,** re-run `send_preview` to mint a fresh nonce.
 7. **Surface `sent.sent_at` and resolved name** as confirmation.
 

@@ -135,9 +135,18 @@ Each entry in `needs_reply` and `low_priority` has: `chat_id`, `label`, `contact
 ```bash
 BRIDGE="$HOME/imessage-bridge"
 REQ_ID=$(uuidgen | tr '[:upper:]' '[:lower:]' | head -c 12)
-cat > "$BRIDGE/control/requests/request-$REQ_ID.json" <<EOF
+
+# IMPORTANT: Write to temp file first, then rename atomically.
+# This prevents launchd from firing mid-write and processing incomplete JSON.
+TMP="$BRIDGE/control/requests/.request-$REQ_ID.json.tmp"
+FINAL="$BRIDGE/control/requests/request-$REQ_ID.json"
+
+cat > "$TMP" <<EOF
 {"id": "$REQ_ID", "action": "review", "params": {"days": 2}}
 EOF
+
+# Atomic rename publishes the complete request.
+mv "$TMP" "$FINAL"
 
 # Poll for response (max 15 seconds)
 for i in {1..30}; do
@@ -148,6 +157,8 @@ for i in {1..30}; do
   sleep 0.5
 done
 ```
+
+**Critical:** Always write requests via temp file + atomic rename. Writing directly to `request-*.json` can cause the helper to fire mid-write, leading to JSON parse errors.
 
 ---
 
@@ -307,10 +318,14 @@ The helper writes `text` to a temporary UTF-8 file, shells out to `/usr/bin/osas
 BRIDGE="$HOME/imessage-bridge"
 REQ_ID_PREVIEW=$(uuidgen | tr '[:upper:]' '[:lower:]' | head -c 12)
 
-# Step 1: send_preview
-cat > "$BRIDGE/control/requests/request-$REQ_ID_PREVIEW.json" <<EOF
+# Step 1: send_preview (atomic write)
+TMP="$BRIDGE/control/requests/.request-$REQ_ID_PREVIEW.json.tmp"
+FINAL="$BRIDGE/control/requests/request-$REQ_ID_PREVIEW.json"
+
+cat > "$TMP" <<EOF
 {"id": "$REQ_ID_PREVIEW", "action": "send_preview", "params": {"to": "+14155551234", "text": "Confirmed for 3pm.", "service": "iMessage"}}
 EOF
+mv "$TMP" "$FINAL"
 
 # Poll for preview response
 for i in {1..30}; do
@@ -327,11 +342,15 @@ SEND_NONCE=$(echo "$PREVIEW" | jq -r '.send_nonce')
 
 # Show preview to user, wait for approval...
 
-# Step 2: send (after user approval)
+# Step 2: send (after user approval, atomic write)
 REQ_ID_SEND=$(uuidgen | tr '[:upper:]' '[:lower:]' | head -c 12)
-cat > "$BRIDGE/control/requests/request-$REQ_ID_SEND.json" <<EOF
+TMP="$BRIDGE/control/requests/.request-$REQ_ID_SEND.json.tmp"
+FINAL="$BRIDGE/control/requests/request-$REQ_ID_SEND.json"
+
+cat > "$TMP" <<EOF
 {"id": "$REQ_ID_SEND", "action": "send", "params": {"to": "+14155551234", "text": "Confirmed for 3pm.", "service": "iMessage", "send_nonce": "$SEND_NONCE"}}
 EOF
+mv "$TMP" "$FINAL"
 
 # Poll for send response
 for i in {1..30}; do
@@ -350,7 +369,7 @@ done
 - **FDA not granted yet.** First request returns `sqlite3.OperationalError: unable to open database file` in `control/log.txt`. Tell the user to grant FDA to `<bridge>/bin/cowork-imessage-helper` in System Settings.
 - **Wrapper re-signed.** If the user rebuilt the wrapper, the FDA grant needs to be removed and re-added (macOS identifies the binary by CDHash, not path).
 - **Ambiguous contact name.** `chat: "Alex"` resolves via the first contact whose name contains "Alex"—may not be the intended one. Fall back to phone number if the user has multiple Alexes.
-- **Group chats.** Group chat IDs look like `chat1234567…`. The `review` and `chat_history` actions accept these, but **sending to group chats is NOT supported**. Use individual phone numbers or emails for sending.
+- **Group chats.** Group chat IDs look like `chat1234567…`. The `review` and `chat_history` actions accept these, but **sending to group chats is NOT supported**. Use individual phone numbers or emails for sending. Attempting to send to a `chatNNNN` identifier will be rejected at the preview stage.
 - **Wrong folder selected.** If the user tells you a new bridge folder path, re-verify that the helper is installed there before proceeding.
 
 ---
