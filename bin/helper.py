@@ -787,7 +787,12 @@ def validate_search(v: Any) -> str:
     return v
 
 
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_EMAIL_ATOM = r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+_EMAIL_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_EMAIL_RE = re.compile(
+    rf"^{_EMAIL_ATOM}(?:\.{_EMAIL_ATOM})*@"
+    rf"{_EMAIL_LABEL}(?:\.{_EMAIL_LABEL})+$"
+)
 _PHONE_RE = re.compile(r"^[+0-9().\- ]+$")
 
 
@@ -809,7 +814,7 @@ def validate_send_recipient(v: Any) -> str:
         raise ValueError("group chat IDs are not supported for sending; use a phone number or email")
 
     if "@" in identifier:
-        if not _EMAIL_RE.match(identifier):
+        if not _EMAIL_RE.fullmatch(identifier):
             raise ValueError("send recipient must be a valid email address or phone number")
         return identifier.strip().lower()
 

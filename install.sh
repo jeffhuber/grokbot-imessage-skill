@@ -27,7 +27,7 @@ if [[ "$EUID" -eq 0 ]]; then
     exit 1
 fi
 
-INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 BIN_DIR="$INSTALL_ROOT/bin"
 CONTROL_DIR="$INSTALL_ROOT/control"
 CONTACTS_DIR="$INSTALL_ROOT/contacts"
