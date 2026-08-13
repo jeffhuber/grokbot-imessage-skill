@@ -277,7 +277,7 @@ You can verify what's actually on your disk:
 - All source is in this repository. Read `bin/helper.py` and
   `bin/send_gate.py`; they run inside the FDA-granted Python process. The
   native confirmation source is `bin/confirm_imessage_send.m`.
-- The C wrapper source is in `bin/cowork_imessage_helper.c`. It does
+- The C wrapper source is in `bin/imessage_helper.c`. It does
   approximately nothing — it exists to stabilize the CDHash. You can
   rebuild it yourself; the README documents the one-line `clang` command
   used by `install.sh`.

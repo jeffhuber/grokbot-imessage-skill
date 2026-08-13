@@ -6,6 +6,8 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Rename wrapper source from `bin/cowork_imessage_helper.c` to `bin/imessage_helper.c`.
+- Export `IMESSAGE_BRIDGE_DIR` (new preferred name) and keep `COWORK_IMESSAGE_BRIDGE_DIR` as a one-release alias.
 - Refuse the retired `~/cowork-imessage` send-gate default; `COWORK_IMESSAGE_BRIDGE_DIR` is now required.
 - Document three-host coexistence with distinct LaunchAgents, wrappers, and bridge folders.
 

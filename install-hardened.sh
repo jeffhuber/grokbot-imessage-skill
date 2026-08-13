@@ -68,7 +68,7 @@ fi
 for path in \
     "$SOURCE_ROOT/bin/helper.py" \
     "$SOURCE_ROOT/bin/send_gate.py" \
-    "$SOURCE_ROOT/bin/cowork_imessage_helper.c" \
+    "$SOURCE_ROOT/bin/imessage_helper.c" \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" \
     "$SOURCE_ROOT/tools/doctor.py" \
     "$SOURCE_ROOT/tools/configure_allowlist.py" \
@@ -162,7 +162,7 @@ clang -Wall -Wextra -Werror -O2 \
     -DHELPER_DISPLAY_NAME='"grokbot-imessage-helper"' \
     -DHOST_DISPLAY_NAME='"Grok Bot"' \
     -o "$BUILD_DIR/grokbot-imessage-helper" \
-    "$SOURCE_ROOT/bin/cowork_imessage_helper.c"
+    "$SOURCE_ROOT/bin/imessage_helper.c"
 
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 SIGN_ARGS=(--force --sign "$CODESIGN_IDENTITY" --options runtime)
@@ -177,7 +177,7 @@ sudo /usr/bin/install -o root -g wheel -m 444 \
 sudo /usr/bin/install -o root -g wheel -m 444 \
     "$SOURCE_ROOT/bin/send_gate.py" "$CODE_ROOT/bin/send_gate.py"
 sudo /usr/bin/install -o root -g wheel -m 444 \
-    "$SOURCE_ROOT/bin/cowork_imessage_helper.c" "$CODE_ROOT/bin/cowork_imessage_helper.c"
+    "$SOURCE_ROOT/bin/imessage_helper.c" "$CODE_ROOT/bin/imessage_helper.c"
 sudo /usr/bin/install -o root -g wheel -m 444 \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" "$CODE_ROOT/bin/confirm_imessage_send.m"
 sudo /usr/bin/install -o root -g wheel -m 555 \
