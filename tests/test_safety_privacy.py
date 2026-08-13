@@ -26,7 +26,9 @@ class BridgeDirMixin:
         self.addCleanup(self._tmp.cleanup)
         self._old_bridge_new = os.environ.get("IMESSAGE_BRIDGE_DIR")
         self._old_bridge_old = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
+        tmp_path = os.path.realpath(self._tmp.name)
+        os.environ["IMESSAGE_BRIDGE_DIR"] = tmp_path
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = tmp_path
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
@@ -68,7 +70,7 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
         try:
             bridge_dir = _send_gate._bridge_dir()
-            self.assertEqual(str(bridge_dir), os.path.realpath(self._tmp.name))
+            self.assertEqual(os.path.realpath(str(bridge_dir)), os.path.realpath(self._tmp.name))
         finally:
             os.environ["IMESSAGE_BRIDGE_DIR"] = self._tmp.name
 

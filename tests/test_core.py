@@ -121,7 +121,9 @@ class SendGateTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self._old_bridge_new = os.environ.get("IMESSAGE_BRIDGE_DIR")
         self._old_bridge_old = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
+        tmp_path = os.path.realpath(self._tmp.name)
+        os.environ["IMESSAGE_BRIDGE_DIR"] = tmp_path
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = tmp_path
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
