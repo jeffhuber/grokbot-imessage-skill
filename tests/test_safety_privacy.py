@@ -64,6 +64,14 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
             if old_env_old is not None:
                 os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = old_env_old
 
+    def test_empty_new_bridge_dir_does_not_fall_back_to_old_name(self) -> None:
+        os.environ["IMESSAGE_BRIDGE_DIR"] = ""
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
+        with self.assertRaisesRegex(RuntimeError, "IMESSAGE_BRIDGE_DIR is required"):
+            _send_gate._bridge_dir()
+        with self.assertRaisesRegex(RuntimeError, "IMESSAGE_BRIDGE_DIR is required"):
+            _send_gate.mint_send_nonce("+14155551234", "test", "iMessage")
+
     def test_old_env_var_alias_still_works(self) -> None:
         # Test that the old COWORK_IMESSAGE_BRIDGE_DIR name still works
         os.environ.pop("IMESSAGE_BRIDGE_DIR", None)

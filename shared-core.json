@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "product": "grokbot-imessage",
+  "identity": {
+    "host_display_name": "Grok Bot",
+    "wrapper_name": "grokbot-imessage-helper",
+    "confirmation_name": "grokbot-imessage-confirm",
+    "helper_version": "1.1.1",
+    "product_id": "grokbot-imessage",
+    "launchd_label": "com.jeffhuber.grokbot-imessage"
+  },
+  "files": [
+    {
+      "logical_name": "check_shared_core.py",
+      "path": "tools/check_shared_core.py",
+      "sha256": "63244c3b1aeee3abd958da0a8085df607a40c3fafa9e494d8d6058943d0e2a49"
+    },
+    {
+      "logical_name": "helper.py",
+      "path": "bin/helper.py",
+      "normalization": "identity",
+      "sha256": "f3279c1653636494faedf1cf3ab532c59088f003e03fc70e3b87ce96fba530e8"
+    },
+    {
+      "logical_name": "send_gate.py",
+      "path": "bin/send_gate.py",
+      "sha256": "4b813be2f18a0985d29aef1c34da8be4d10f2ae6a8c1bce300fb77abf3042cd1"
+    },
+    {
+      "logical_name": "imessage_helper.c",
+      "path": "bin/imessage_helper.c",
+      "sha256": "c0de45fa0359c033c362cae2bc64dcb0d11b352431b3210f024dd54cf8921128"
+    },
+    {
+      "logical_name": "confirm_imessage_send.m",
+      "path": "bin/confirm_imessage_send.m",
+      "sha256": "377fc6bbeeaf45c945f7ba54c4ac911f8f2e83ace42d4ee8ee805a5c4612f894"
+    }
+  ]
+}
