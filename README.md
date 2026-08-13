@@ -387,7 +387,9 @@ Release archives are source-only and are not notarized; see
 
 ## Related Projects
 
-**Looking for Claude Cowork?** The sibling integration for Claude Cowork lives at [github.com/jeffhuber/claudecowork-imessage-skill](https://github.com/jeffhuber/claudecowork-imessage-skill). Same helper, different host adapter.
+**Claude Cowork** is a sibling project with its own LaunchAgent (`com.jeffhuber.claudecowork-imessage`), wrapper, and bridge. Do not share a bridge folder, request queue, or Full Disk Access grant between hosts. See [github.com/jeffhuber/claudecowork-imessage-skill](https://github.com/jeffhuber/claudecowork-imessage-skill).
+
+**ChatGPT/Codex** has an independent helper at [github.com/jeffhuber/chatgpt-codex-imessage-plugin](https://github.com/jeffhuber/chatgpt-codex-imessage-plugin) (`com.jeffhuber.chatgpt-codex-imessage`).
 
 ---
 
