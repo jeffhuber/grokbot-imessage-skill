@@ -9,6 +9,8 @@ version reported by the `status` action.
 - Add native, fail-closed full-message confirmation before every send.
 - Add atomic request, response, and nonce handling with bounded data retention.
 - Add SQLite online snapshots, diagnostics, skill installation, tests, and CI.
+- Open completed Messages snapshots as immutable, read-only databases so
+  WAL-marked snapshots do not require writable `-wal` or `-shm` sidecars.
 - Add protocol and helper version reporting.
 - Add an optional hardened install with root-owned executable code, wrapper
   validation of every loaded component, and a root-owned default-deny read
