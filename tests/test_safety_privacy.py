@@ -11,6 +11,14 @@ from unittest import mock
 
 from tests._helper_loader import REPO_ROOT, helper
 
+# Load send_gate module directly for tests that need to check its internals
+import importlib.util as _importlib_util
+_send_gate_spec = _importlib_util.spec_from_file_location(
+    "send_gate", REPO_ROOT / "bin" / "send_gate.py"
+)
+_send_gate = _importlib_util.module_from_spec(_send_gate_spec)
+_send_gate_spec.loader.exec_module(_send_gate)
+
 
 class BridgeDirMixin:
     def setUp(self) -> None:
@@ -30,6 +38,21 @@ class BridgeDirMixin:
 class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
     def _nonce(self, to: str, text: str, service: str = "iMessage") -> str:
         return helper.mint_send_nonce(to, text, service)
+
+    def test_bridge_dir_fails_closed_without_env_var(self) -> None:
+        old_env = os.environ.pop("COWORK_IMESSAGE_BRIDGE_DIR", None)
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError, "COWORK_IMESSAGE_BRIDGE_DIR is required"
+            ):
+                _send_gate._bridge_dir()
+            with self.assertRaisesRegex(
+                RuntimeError, "COWORK_IMESSAGE_BRIDGE_DIR is required"
+            ):
+                _send_gate.mint_send_nonce("+14155551234", "test", "iMessage")
+        finally:
+            if old_env is not None:
+                os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = old_env
 
     def test_full_payload_and_raw_recipient_reach_confirmation(self) -> None:
         to = "+14155551234"
