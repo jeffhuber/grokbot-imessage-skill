@@ -13,18 +13,18 @@
     {
       "logical_name": "check_shared_core.py",
       "path": "tools/check_shared_core.py",
-      "sha256": "4e7a8c688312335c7cbd0fd6afcad89196ef3968904497004c841a743df67106"
+      "sha256": "63244c3b1aeee3abd958da0a8085df607a40c3fafa9e494d8d6058943d0e2a49"
     },
     {
       "logical_name": "helper.py",
       "path": "bin/helper.py",
       "normalization": "identity",
-      "sha256": "e41c0f4e99cd5c28ae28917c58a688043247beed6f11345cae76d8f5797f2c94"
+      "sha256": "f3279c1653636494faedf1cf3ab532c59088f003e03fc70e3b87ce96fba530e8"
     },
     {
       "logical_name": "send_gate.py",
       "path": "bin/send_gate.py",
-      "sha256": "32f934bddb89cdea31c4d48eba856124b226696a482ce020df218beaf897bead"
+      "sha256": "4b813be2f18a0985d29aef1c34da8be4d10f2ae6a8c1bce300fb77abf3042cd1"
     },
     {
       "logical_name": "imessage_helper.c",

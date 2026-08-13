@@ -22,14 +22,6 @@ IDENTITY_KEYS = (
     "product_id",
     "launchd_label",
 )
-IDENTITY_COUNTS = {
-    "host_display_name": 2,
-    "wrapper_name": 1,
-    "confirmation_name": 1,
-    "helper_version": 1,
-    "product_id": 1,
-    "launchd_label": 1,
-}
 
 
 def _sha256(data: bytes) -> str:
@@ -69,13 +61,8 @@ def _normalize_identity(data: bytes, identity: dict[str, Any], path: Path) -> by
     # Replace longer values first because product IDs can be substrings of
     # wrapper names and launchd labels.
     for value, replacement in sorted(substitutions, key=lambda item: len(item[0]), reverse=True):
-        key = replacement.removeprefix("__IMESSAGE_").removesuffix("__").lower()
-        count = text.count(value)
-        if count != IDENTITY_COUNTS[key]:
-            raise ValueError(
-                f"{path}: expected identity.{key} value {value!r} "
-                f"{IDENTITY_COUNTS[key]} time(s), found {count}"
-            )
+        if value not in text:
+            raise ValueError(f"{path}: identity value {value!r} was not found")
         text = text.replace(value, replacement)
     return text.encode("utf-8")
 

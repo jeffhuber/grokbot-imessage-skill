@@ -52,8 +52,8 @@ Choose deliberately based on the local threat model:
 
 | Mode | Best fit | Security and operational tradeoff |
 |---|---|---|
-| **Standard** | Evaluation or a personal Mac where you trust other same-user software | No administrator access; user-writable code and blocklist do not resist a compromised same-user process. |
-| **Hardened** | Ongoing use with sensitive conversations or many same-user automation tools | Root-owned validated code and a root-owned default-deny allowlist; requires administrator installation and explicit allowlist maintenance. |
+| **Standard** | **Default.** Personal Mac, getting started, and everyday use. | No `sudo`; user-writable code does not resist a compromised same-user process. |
+| **Hardened** | You run other unsandboxed automation as your user, or want a root-owned default-deny allowlist. | Root-owned validated code; requires `sudo` and explicit allowlist maintenance. |
 
 **Standard per-user install:**
 
