@@ -45,14 +45,19 @@ from typing import Any, Iterable
 # Paths
 # ---------------------------------------------------------------------------
 CODE_ROOT = Path(__file__).resolve().parent.parent
-BRIDGE_ROOT = Path(
-    os.path.abspath(
-        os.path.expanduser(
-            os.environ.get("IMESSAGE_BRIDGE_DIR")
-            or os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-            or str(CODE_ROOT)
-        )
+if "IMESSAGE_BRIDGE_DIR" in os.environ:
+    _bridge_root_value = os.environ["IMESSAGE_BRIDGE_DIR"]
+elif "COWORK_IMESSAGE_BRIDGE_DIR" in os.environ:
+    _bridge_root_value = os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]
+else:
+    _bridge_root_value = str(CODE_ROOT)
+if not _bridge_root_value:
+    raise RuntimeError(
+        "IMESSAGE_BRIDGE_DIR is required "
+        "(COWORK_IMESSAGE_BRIDGE_DIR remains a one-release compatibility alias)"
     )
+BRIDGE_ROOT = Path(
+    os.path.abspath(os.path.expanduser(_bridge_root_value))
 )
 REQUESTS_DIR = BRIDGE_ROOT / "control" / "requests"
 RESPONSES_DIR = BRIDGE_ROOT / "control" / "responses"
@@ -95,9 +100,9 @@ def _load_sibling(name: str):
     return mod
 
 
-# Route send_gate's state to the bridge so the send gate knows where to write nonces.
-# Prefer IMESSAGE_BRIDGE_DIR, fall back to the one-release COWORK_IMESSAGE_BRIDGE_DIR
-# alias, finally use BRIDGE_ROOT when neither is set.
+# Route send_gate's state to the bridge so the send gate knows where to write
+# nonces. Preserve explicit values and retain the legacy name as a
+# compatibility input. Empty explicit values have already failed closed above.
 if "IMESSAGE_BRIDGE_DIR" not in os.environ and "COWORK_IMESSAGE_BRIDGE_DIR" not in os.environ:
     os.environ["IMESSAGE_BRIDGE_DIR"] = str(BRIDGE_ROOT)
 _send_gate = _load_sibling("send_gate")

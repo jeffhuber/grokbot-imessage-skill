@@ -22,8 +22,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_version.py tools/configure_allowlist.py tools/migrate_legacy_launchagent.py
+      - run: python -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_shared_core.py tools/check_version.py tools/configure_allowlist.py tools/migrate_legacy_launchagent.py
       - run: python -m unittest discover -s tests -v
+      - run: python tools/check_shared_core.py
       - run: bash -n install.sh
       - run: bash -n install-skill.sh
       - run: bash -n install-hardened.sh

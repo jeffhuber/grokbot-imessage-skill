@@ -1,0 +1,43 @@
+name: Shared Core Parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "bin/helper.py"
+      - "bin/send_gate.py"
+      - "bin/imessage_helper.c"
+      - "bin/confirm_imessage_send.m"
+      - "shared-core.json"
+      - "tools/check_shared_core.py"
+      - ".github/workflows/shared-core-parity.yml"
+  schedule:
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Grok Bot repository
+        uses: actions/checkout@v4
+        with:
+          path: grok
+          persist-credentials: false
+      - name: Check out Claude Cowork repository
+        uses: actions/checkout@v4
+        with:
+          repository: jeffhuber/claudecowork-imessage-skill
+          path: claude
+          persist-credentials: false
+      - name: Check out ChatGPT/Codex repository
+        uses: actions/checkout@v4
+        with:
+          repository: jeffhuber/chatgpt-codex-imessage-plugin
+          path: chatgpt
+          persist-credentials: false
+      - name: Compare security-critical shared core
+        run: python3 grok/tools/check_shared_core.py claude grok chatgpt

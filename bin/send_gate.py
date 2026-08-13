@@ -41,11 +41,16 @@ class SendGateError(Exception):
 
 
 def _bridge_dir() -> pathlib.Path:
-    override = os.environ.get("IMESSAGE_BRIDGE_DIR") or os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
+    if "IMESSAGE_BRIDGE_DIR" in os.environ:
+        override = os.environ["IMESSAGE_BRIDGE_DIR"]
+    elif "COWORK_IMESSAGE_BRIDGE_DIR" in os.environ:
+        override = os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]
+    else:
+        override = None
     if not override:
         raise RuntimeError(
             "IMESSAGE_BRIDGE_DIR is required "
-            "(COWORK_IMESSAGE_BRIDGE_DIR still accepted for one release)"
+            "(COWORK_IMESSAGE_BRIDGE_DIR remains a one-release compatibility alias)"
         )
     return pathlib.Path(os.path.abspath(os.path.expanduser(override)))
 
