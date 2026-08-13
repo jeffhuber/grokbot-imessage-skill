@@ -24,15 +24,20 @@ class BridgeDirMixin:
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-imessage-test-")
         self.addCleanup(self._tmp.cleanup)
-        self._old_bridge = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
+        self._old_bridge_new = os.environ.get("IMESSAGE_BRIDGE_DIR")
+        self._old_bridge_old = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
+        os.environ["IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
-        if self._old_bridge is None:
+        if self._old_bridge_new is None:
+            os.environ.pop("IMESSAGE_BRIDGE_DIR", None)
+        else:
+            os.environ["IMESSAGE_BRIDGE_DIR"] = self._old_bridge_new
+        if self._old_bridge_old is None:
             os.environ.pop("COWORK_IMESSAGE_BRIDGE_DIR", None)
         else:
-            os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._old_bridge
+            os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._old_bridge_old
 
 
 class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
@@ -40,19 +45,32 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         return helper.mint_send_nonce(to, text, service)
 
     def test_bridge_dir_fails_closed_without_env_var(self) -> None:
-        old_env = os.environ.pop("COWORK_IMESSAGE_BRIDGE_DIR", None)
+        old_env_new = os.environ.pop("IMESSAGE_BRIDGE_DIR", None)
+        old_env_old = os.environ.pop("COWORK_IMESSAGE_BRIDGE_DIR", None)
         try:
             with self.assertRaisesRegex(
-                RuntimeError, "COWORK_IMESSAGE_BRIDGE_DIR is required"
+                RuntimeError, "IMESSAGE_BRIDGE_DIR is required"
             ):
                 _send_gate._bridge_dir()
             with self.assertRaisesRegex(
-                RuntimeError, "COWORK_IMESSAGE_BRIDGE_DIR is required"
+                RuntimeError, "IMESSAGE_BRIDGE_DIR is required"
             ):
                 _send_gate.mint_send_nonce("+14155551234", "test", "iMessage")
         finally:
-            if old_env is not None:
-                os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = old_env
+            if old_env_new is not None:
+                os.environ["IMESSAGE_BRIDGE_DIR"] = old_env_new
+            if old_env_old is not None:
+                os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = old_env_old
+
+    def test_old_env_var_alias_still_works(self) -> None:
+        # Test that the old COWORK_IMESSAGE_BRIDGE_DIR name still works
+        os.environ.pop("IMESSAGE_BRIDGE_DIR", None)
+        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._tmp.name
+        try:
+            bridge_dir = _send_gate._bridge_dir()
+            self.assertEqual(str(bridge_dir), os.path.realpath(self._tmp.name))
+        finally:
+            os.environ["IMESSAGE_BRIDGE_DIR"] = self._tmp.name
 
     def test_full_payload_and_raw_recipient_reach_confirmation(self) -> None:
         to = "+14155551234"

@@ -119,20 +119,25 @@ class SendGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-nonce-test-")
         self.addCleanup(self._tmp.cleanup)
-        self._old_bridge = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
-        os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
+        self._old_bridge_new = os.environ.get("IMESSAGE_BRIDGE_DIR")
+        self._old_bridge_old = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
+        os.environ["IMESSAGE_BRIDGE_DIR"] = os.path.realpath(self._tmp.name)
         self.addCleanup(self._restore_bridge)
 
     def _restore_bridge(self) -> None:
-        if self._old_bridge is None:
+        if self._old_bridge_new is None:
+            os.environ.pop("IMESSAGE_BRIDGE_DIR", None)
+        else:
+            os.environ["IMESSAGE_BRIDGE_DIR"] = self._old_bridge_new
+        if self._old_bridge_old is None:
             os.environ.pop("COWORK_IMESSAGE_BRIDGE_DIR", None)
         else:
-            os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._old_bridge
+            os.environ["COWORK_IMESSAGE_BRIDGE_DIR"] = self._old_bridge_old
 
     def test_nonce_round_trip_and_replay_rejection(self) -> None:
         nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
         nonce_path = (
-            Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces" / f"{nonce}.json"
+            Path(os.environ["IMESSAGE_BRIDGE_DIR"]) / "nonces" / f"{nonce}.json"
         )
         self.assertEqual(stat.S_IMODE(nonce_path.stat().st_mode), 0o600)
         helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
@@ -147,7 +152,7 @@ class SendGateTests(unittest.TestCase):
             helper.consume_send_nonce(nonce, "+14155551234", "hello", "iMessage")
 
     def test_malformed_expiry_burns_nonce(self) -> None:
-        nonce_dir = Path(os.environ["COWORK_IMESSAGE_BRIDGE_DIR"]) / "nonces"
+        nonce_dir = Path(os.environ["IMESSAGE_BRIDGE_DIR"]) / "nonces"
         for expires_at in ("later", float("nan"), True):
             with self.subTest(expires_at=expires_at):
                 nonce = helper.mint_send_nonce("+14155551234", "hello", "iMessage")
