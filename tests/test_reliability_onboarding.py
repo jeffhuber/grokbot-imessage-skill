@@ -138,6 +138,33 @@ class SQLiteBackupTests(unittest.TestCase):
                 )
                 self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone(), ("ok",))
 
+    def test_production_open_reads_wal_snapshot_without_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-wal-open-") as td:
+            source = Path(td) / "chat.db"
+            with sqlite3.connect(str(source)) as writer:
+                self.assertEqual(writer.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+                writer.execute("CREATE TABLE sample(value TEXT)")
+                writer.execute("INSERT INTO sample VALUES ('wal-header')")
+                writer.commit()
+
+                with mock.patch.object(helper, "CHAT_DB_PATH", source):
+                    snapshot = helper.copy_chatdb()
+                self.addCleanup(helper.cleanup_tmpdb, snapshot)
+
+            wal_path = Path(f"{snapshot}-wal")
+            shm_path = Path(f"{snapshot}-shm")
+            self.assertEqual(snapshot.read_bytes()[18:20], b"\x02\x02")
+            self.assertFalse(wal_path.exists())
+            self.assertFalse(shm_path.exists())
+
+            with helper.open_snapshot(snapshot) as reader:
+                self.assertEqual(
+                    reader.execute("SELECT value FROM sample").fetchall(),
+                    [(b"wal-header",)],
+                )
+                self.assertFalse(wal_path.exists())
+                self.assertFalse(shm_path.exists())
+
 
 class StatusContractTests(unittest.TestCase):
     def test_status_is_whitelisted_and_does_not_need_chat_db(self) -> None:

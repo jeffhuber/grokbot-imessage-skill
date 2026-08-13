@@ -969,6 +969,14 @@ def cleanup_tmpdb(path: Path) -> None:
             pass
 
 
+def open_snapshot(db_path: Path) -> sqlite3.Connection:
+    """Open a completed, private chat.db snapshot without SQLite sidecars."""
+    snapshot_uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    conn = sqlite3.connect(snapshot_uri, uri=True)
+    conn.text_factory = bytes
+    return conn
+
+
 def to_apple_ns(unix_seconds: float) -> int:
     return int((unix_seconds - APPLE_EPOCH) * 1_000_000_000)
 
@@ -1653,8 +1661,7 @@ def process_request(
         conn = None
         if needs_db:
             db_path = copy_chatdb()
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            conn.text_factory = bytes
+            conn = open_snapshot(db_path)
         needs_contacts = getattr(action_fn, "needs_contacts", True)
         contacts = load_contacts() if needs_contacts else {}
         result = action_fn(params, conn, contacts, privacy_policy)
