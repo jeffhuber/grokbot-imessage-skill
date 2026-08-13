@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cowork-imessage helper
+"""Grok Bot iMessage helper
 
 Runs on macOS, triggered by launchd when a new file lands in control/requests/.
 Scans the request queue, dispatches each whitelisted action against a snapshot
@@ -73,7 +73,7 @@ CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "grokbot-imessage-confirm"
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
 HOST_DISPLAY_NAME = os.environ.get("IMESSAGE_HOST_DISPLAY_NAME", "Grok Bot")
 
-HELPER_VERSION = "1.1.0"
+HELPER_VERSION = "1.1.1"
 PROTOCOL_VERSION = "1.1"
 
 # ---------------------------------------------------------------------------
@@ -95,9 +95,9 @@ def _load_sibling(name: str):
     return mod
 
 
-# Route send_gate's state to our install tree so a non-default install
-# (helper lives somewhere other than ~/cowork-imessage/) still works.
-# Prefer new name, fall back to old name, finally use BRIDGE_ROOT default.
+# Route send_gate's state to the bridge so the send gate knows where to write nonces.
+# Prefer IMESSAGE_BRIDGE_DIR, fall back to the one-release COWORK_IMESSAGE_BRIDGE_DIR
+# alias, finally use BRIDGE_ROOT when neither is set.
 if "IMESSAGE_BRIDGE_DIR" not in os.environ and "COWORK_IMESSAGE_BRIDGE_DIR" not in os.environ:
     os.environ["IMESSAGE_BRIDGE_DIR"] = str(BRIDGE_ROOT)
 _send_gate = _load_sibling("send_gate")
