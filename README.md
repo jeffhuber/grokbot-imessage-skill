@@ -385,11 +385,13 @@ Release archives are source-only and are not notarized; see
 
 ---
 
-## Related Projects
+## Coexistence
 
-**Claude Cowork** is a sibling project with its own LaunchAgent (`com.jeffhuber.claudecowork-imessage`), wrapper, and bridge. Do not share a bridge folder, request queue, or Full Disk Access grant between hosts. See [github.com/jeffhuber/claudecowork-imessage-skill](https://github.com/jeffhuber/claudecowork-imessage-skill).
+These are independent helpers. Do not share a bridge folder, request queue, or Full Disk Access grant.
 
-**ChatGPT/Codex** has an independent helper at [github.com/jeffhuber/chatgpt-codex-imessage-plugin](https://github.com/jeffhuber/chatgpt-codex-imessage-plugin) (`com.jeffhuber.chatgpt-codex-imessage`).
+- **Grok Bot** — LaunchAgent `com.jeffhuber.grokbot-imessage`, wrapper `grokbot-imessage-helper` — https://github.com/jeffhuber/grokbot-imessage-skill
+- **Claude Cowork** — LaunchAgent `com.jeffhuber.claudecowork-imessage`, wrapper `claude-cowork-imessage-helper` — https://github.com/jeffhuber/claudecowork-imessage-skill
+- **ChatGPT/Codex** — LaunchAgent `com.jeffhuber.chatgpt-codex-imessage`, wrapper `chatgpt-codex-imessage-helper` — https://github.com/jeffhuber/chatgpt-codex-imessage-plugin
 
 ---
 

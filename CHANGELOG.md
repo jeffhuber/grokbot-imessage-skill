@@ -4,6 +4,11 @@ Notable changes are documented here. Releases use semantic versioning for the
 helper and skill, while the protocol has its own major/minor compatibility
 version reported by the `status` action.
 
+## Unreleased
+
+- Refuse the retired `~/cowork-imessage` send-gate default; `COWORK_IMESSAGE_BRIDGE_DIR` is now required.
+- Document three-host coexistence with distinct LaunchAgents, wrappers, and bridge folders.
+
 ## 1.1.0 - 2026-08-12
 
 - Add native, fail-closed full-message confirmation before every send.
