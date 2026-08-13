@@ -6,10 +6,14 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.1.1 - 2026-08-12
+
 - Rename wrapper source from `bin/cowork_imessage_helper.c` to `bin/imessage_helper.c`.
 - Export `IMESSAGE_BRIDGE_DIR` (new preferred name) and keep `COWORK_IMESSAGE_BRIDGE_DIR` as a one-release alias.
-- Refuse the retired `~/cowork-imessage` send-gate default; `COWORK_IMESSAGE_BRIDGE_DIR` is now required.
+- Refuse the retired `~/cowork-imessage` send-gate default; `IMESSAGE_BRIDGE_DIR` is now required.
 - Document three-host coexistence with distinct LaunchAgents, wrappers, and bridge folders.
+- README now leads with standard `./install.sh` as the primary install path; hardened mode is presented as optional defense-in-depth.
+- Add native send-dialog screenshot to documentation.
 
 ## 1.1.0 - 2026-08-12
 

@@ -48,13 +48,38 @@ cd grokbot-imessage-skill
 
 ### 2. Choose an installation mode
 
-**Hardened install (recommended):**
+**Standard per-user install:**
+
+Run `./install.sh` from the repository:
+
+```bash
+./install.sh
+```
+
+Or copy it to a dedicated folder first:
+
+```bash
+mkdir ~/imessage-bridge
+cp -r bin/ tools/ contacts/ SKILL.md install.sh install-hardened.sh \
+  install-skill.sh uninstall.sh uninstall-hardened.sh \
+  com.jeffhuber.grokbot-imessage.plist.template ~/imessage-bridge/
+cd ~/imessage-bridge && ./install.sh
+```
+
+The standard installer does not require `sudo` and is the fastest way to get started. 
+Its Python code is writable by processes running as your user. Its default `blocklist` 
+policy is intended to prevent accidental disclosure, not resist a compromised same-user 
+process.
+
+**Hardened install (optional defense-in-depth):**
+
+For additional security, use the hardened installer:
 
 ```bash
 ./install-hardened.sh
 ```
 
-This invokes `sudo` only to install trusted code under a root-owned per-user path,
+This invokes `sudo` to install trusted code under a root-owned per-user path,
 `/Library/Application Support/GrokBotIMessage/users/<uid>/libexec`. Requests, responses,
 logs, and nonces remain in your user-owned
 `~/Library/Application Support/GrokBotIMessage` bridge. Reads default to deny;
@@ -68,23 +93,6 @@ python3 "$CODE_ROOT/tools/configure_allowlist.py" \
 
 The root-owned wrapper validates `helper.py`, `send_gate.py`, the confirmation
 binary, and the root-owned allowlist before inheriting Full Disk Access.
-
-**Standard per-user install:**
-
-Run `./install.sh` to use the repository itself as both code and bridge, or copy
-it to a dedicated folder first:
-
-```bash
-mkdir ~/imessage-bridge
-cp -r bin/ tools/ contacts/ SKILL.md install.sh install-hardened.sh \
-  install-skill.sh uninstall.sh uninstall-hardened.sh \
-  com.jeffhuber.grokbot-imessage.plist.template ~/imessage-bridge/
-cd ~/imessage-bridge && ./install.sh
-```
-
-The standard installer does not require `sudo`, but its Python code is writable
-by processes running as your user. Its default `blocklist` policy is intended
-to prevent accidental disclosure, not resist a compromised same-user process.
 
 Both installers:
 - Compile the C wrapper with your install path baked in
@@ -209,6 +217,10 @@ Sending is gated at the **helper level** with two layers of protection:
      - Full message text in a scrollable, read-only view
    - **Cancel is the keyboard default.** You must deliberately select **Send** to proceed. Clicking Cancel or waiting 60 seconds aborts the send.
    - This dialog enforces human approval at the macOS level—even a valid nonce requires explicit user confirmation.
+
+![Native send confirmation dialog. Cancel is the default action.](docs/images/send-confirm-dialog.png)
+
+This is the native macOS confirmation shown after valid send nonce validation. **Cancel** is the keyboard default (Return key); **Send** requires a deliberate click. The example shows the message payload displayed to the user before any send occurs.
 
 Nonces expire after 60 seconds, are single-use, and are deleted on validation
 failure. A process that can read and write the bridge can mint its own nonce, so
@@ -387,11 +399,13 @@ Release archives are source-only and are not notarized; see
 
 ## Coexistence
 
-These are independent helpers. Do not share a bridge folder, request queue, or Full Disk Access grant.
+Three independent iMessage helpers can run side by side. Each maintains its own LaunchAgent, wrapper, bridge folder, policies, and Full Disk Access grant. **This separation is intentional**—FDA-bearing code, send-gate nonces, read policies, and per-host confirmation identities must not be shared.
 
 - **Grok Bot** — LaunchAgent `com.jeffhuber.grokbot-imessage`, wrapper `grokbot-imessage-helper` — https://github.com/jeffhuber/grokbot-imessage-skill
 - **Claude Cowork** — LaunchAgent `com.jeffhuber.claudecowork-imessage`, wrapper `claude-cowork-imessage-helper` — https://github.com/jeffhuber/claudecowork-imessage-skill
 - **ChatGPT/Codex** — LaunchAgent `com.jeffhuber.chatgpt-codex-imessage`, wrapper `chatgpt-codex-imessage-helper` — https://github.com/jeffhuber/chatgpt-codex-imessage-plugin
+
+Do not point multiple hosts at one bridge or attempt to consolidate them.
 
 ---
 
