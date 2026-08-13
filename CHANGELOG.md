@@ -4,7 +4,7 @@ Notable changes are documented here. Releases use semantic versioning for the
 helper and skill, while the protocol has its own major/minor compatibility
 version reported by the `status` action.
 
-## 1.1.0 - Unreleased
+## 1.1.0 - 2026-08-12
 
 - Add native, fail-closed full-message confirmation before every send.
 - Add atomic request, response, and nonce handling with bounded data retention.
