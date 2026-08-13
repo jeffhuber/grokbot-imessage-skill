@@ -95,9 +95,9 @@ def _load_sibling(name: str):
     return mod
 
 
-# Route send_gate's state to the bridge so the send gate knows where to write nonces.
-# Prefer IMESSAGE_BRIDGE_DIR, fall back to the one-release COWORK_IMESSAGE_BRIDGE_DIR
-# alias, finally use BRIDGE_ROOT when neither is set.
+# Route send_gate's state to the bridge so the send gate knows where to write
+# nonces. Preserve explicit values, including an empty value that must fail
+# closed, and retain the legacy name as a compatibility input.
 if "IMESSAGE_BRIDGE_DIR" not in os.environ and "COWORK_IMESSAGE_BRIDGE_DIR" not in os.environ:
     os.environ["IMESSAGE_BRIDGE_DIR"] = str(BRIDGE_ROOT)
 _send_gate = _load_sibling("send_gate")

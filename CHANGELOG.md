@@ -6,6 +6,10 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Clarify standard and hardened installation as an explicit threat-model choice.
+- Add a deterministic shared-core manifest, per-repository CI validation, and a
+  scheduled parity check against the Claude Cowork and ChatGPT/Codex siblings.
+
 ## 1.1.1 - 2026-08-12
 
 - Rename wrapper source from `bin/cowork_imessage_helper.c` to `bin/imessage_helper.c`.

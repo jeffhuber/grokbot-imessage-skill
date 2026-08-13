@@ -48,6 +48,13 @@ cd grokbot-imessage-skill
 
 ### 2. Choose an installation mode
 
+Choose deliberately based on the local threat model:
+
+| Mode | Best fit | Security and operational tradeoff |
+|---|---|---|
+| **Standard** | Evaluation or a personal Mac where you trust other same-user software | No administrator access; user-writable code and blocklist do not resist a compromised same-user process. |
+| **Hardened** | Ongoing use with sensitive conversations or many same-user automation tools | Root-owned validated code and a root-owned default-deny allowlist; requires administrator installation and explicit allowlist maintenance. |
+
 **Standard per-user install:**
 
 Run `./install.sh` from the repository:
@@ -71,7 +78,7 @@ Its Python code is writable by processes running as your user. Its default `bloc
 policy is intended to prevent accidental disclosure, not resist a compromised same-user 
 process.
 
-**Hardened install (optional defense-in-depth):**
+**Hardened install:**
 
 For additional security, use the hardened installer:
 
@@ -180,7 +187,7 @@ skills. Skip this check when another host injects `SKILL.md` directly.
 
 ### Read Policy
 
-The recommended hardened install enforces a root-owned, default-deny allowlist.
+The hardened install enforces a root-owned, default-deny allowlist.
 Only listed phone numbers, emails, and group IDs can appear in message or contact
 responses. Manage it with `configure_allowlist.py`; a same-user process cannot
 broaden it without administrator approval.
@@ -399,13 +406,18 @@ Release archives are source-only and are not notarized; see
 
 ## Coexistence
 
-Three independent iMessage helpers can run side by side. Each maintains its own LaunchAgent, wrapper, bridge folder, policies, and Full Disk Access grant. **This separation is intentional**—FDA-bearing code, send-gate nonces, read policies, and per-host confirmation identities must not be shared.
+Three independently deployed iMessage helpers can run side by side. Each
+maintains its own LaunchAgent, wrapper, bridge folder, policies, nonce store,
+and Full Disk Access grant. These runtime and authorization boundaries must not
+be shared. The security-critical source is intentionally kept in parity through
+`shared-core.json` and CI. See [Shared Core Maintenance](docs/SHARED_CORE.md).
 
 - **Grok Bot** — LaunchAgent `com.jeffhuber.grokbot-imessage`, wrapper `grokbot-imessage-helper` — https://github.com/jeffhuber/grokbot-imessage-skill
 - **Claude Cowork** — LaunchAgent `com.jeffhuber.claudecowork-imessage`, wrapper `claude-cowork-imessage-helper` — https://github.com/jeffhuber/claudecowork-imessage-skill
 - **ChatGPT/Codex** — LaunchAgent `com.jeffhuber.chatgpt-codex-imessage`, wrapper `chatgpt-codex-imessage-helper` — https://github.com/jeffhuber/chatgpt-codex-imessage-plugin
 
-Do not point multiple hosts at one bridge or attempt to consolidate them.
+Do not point multiple hosts at one bridge or consolidate their installed
+runtime identities.
 
 ---
 
@@ -418,6 +430,7 @@ PRs welcome! If you find a bug or want to add a feature:
 3. Follow the existing code style (Python 3.9+, type hints where helpful).
 4. Run `python3 -m unittest discover -s tests -v`, `bash -n` on the shell
    scripts, and the native compile checks from `.github/workflows/ci.yml`.
+5. For shared-core changes, follow [the cross-repository procedure](docs/SHARED_CORE.md).
 
 **Security issues:** Email <jhuber+grokbotimessage@gmail.com> instead of opening a public issue. See **[SECURITY.md](./SECURITY.md)** for details.
 

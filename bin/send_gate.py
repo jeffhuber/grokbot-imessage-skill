@@ -45,7 +45,7 @@ def _bridge_dir() -> pathlib.Path:
     if not override:
         raise RuntimeError(
             "IMESSAGE_BRIDGE_DIR is required "
-            "(COWORK_IMESSAGE_BRIDGE_DIR still accepted for one release)"
+            "(COWORK_IMESSAGE_BRIDGE_DIR remains a one-release compatibility alias)"
         )
     return pathlib.Path(os.path.abspath(os.path.expanduser(override)))
 
