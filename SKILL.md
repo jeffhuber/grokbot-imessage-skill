@@ -7,7 +7,7 @@ description: >
   stats, or send a plain-text iMessage. macOS only—uses an on-device launchd
   helper to query the Messages SQLite database and AppleScript (osascript) to
   send outbound messages.
-version: 1.1.0
+version: 1.1.1
 ---
 
 # iMessage on macOS — Grok Bot
@@ -45,7 +45,7 @@ Sending goes through the **same** request/response bridge. You write a `send_pre
 The helper must be installed on the user's Mac before you can use this skill. **Installation is manual** and requires the user to:
 
 1. Clone or download this repository.
-2. Run the recommended `install-hardened.sh` or the standard `install.sh`.
+2. Run the standard `install.sh` (or optionally `install-hardened.sh` for defense-in-depth).
 3. Grant **Full Disk Access** to the exact wrapper path printed by the installer.
 4. (For sending) Approve the Automation prompt on first send: *"grokbot-imessage-helper wants to control Messages."*
 
