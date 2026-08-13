@@ -6,9 +6,16 @@ version reported by the `status` action.
 
 ## Unreleased
 
-- Clarify standard and hardened installation as an explicit threat-model choice.
-- Add a deterministic shared-core manifest, per-repository CI validation, and a
-  scheduled parity check against the Claude Cowork and ChatGPT/Codex siblings.
+## 1.2.0 - 2026-08-13
+
+- Adopt shared-core manifest for deterministic cross-repo comparison with Claude
+  Cowork and ChatGPT/Codex siblings. Add per-repository CI validation and a daily
+  scheduled parity workflow.
+- Fail closed when `IMESSAGE_BRIDGE_DIR` is unset or empty; the retired default
+  path is no longer available.
+- README now leads with standard `./install.sh` as the primary install path;
+  hardened mode is presented as optional defense-in-depth for high-risk scenarios.
+- Protocol version remains 1.1 (backward-compatible with 1.1.0 and 1.1.1).
 
 ## 1.1.1 - 2026-08-12
 
