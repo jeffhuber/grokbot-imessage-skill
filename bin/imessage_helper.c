@@ -148,7 +148,8 @@ int main(int argc, char **argv) {
 
     struct passwd *pw = getpwuid(getuid());
     static char home_buf[PATH_MAX + 16];
-    static char bridge_buf[PATH_MAX + 48];
+    static char bridge_buf_new[PATH_MAX + 48];
+    static char bridge_buf_old[PATH_MAX + 48];
     static char policy_buf[64];
     static char allowlist_buf[PATH_MAX + 64];
     static char root_policy_buf[64];
@@ -156,7 +157,9 @@ int main(int argc, char **argv) {
 
     if (set_env_value(home_buf, sizeof(home_buf), "HOME",
                       pw && pw->pw_dir ? pw->pw_dir : "/") != 0 ||
-        set_env_value(bridge_buf, sizeof(bridge_buf),
+        set_env_value(bridge_buf_new, sizeof(bridge_buf_new),
+                      "IMESSAGE_BRIDGE_DIR", BRIDGE_ROOT) != 0 ||
+        set_env_value(bridge_buf_old, sizeof(bridge_buf_old),
                       "COWORK_IMESSAGE_BRIDGE_DIR", BRIDGE_ROOT) != 0 ||
         set_env_value(policy_buf, sizeof(policy_buf),
                       "COWORK_IMESSAGE_READ_POLICY", READ_POLICY_MODE) != 0 ||
@@ -174,7 +177,8 @@ int main(int argc, char **argv) {
         "PATH=/usr/bin:/bin",
         home_buf,
         "LANG=en_US.UTF-8",
-        bridge_buf,
+        bridge_buf_new,
+        bridge_buf_old,
         policy_buf,
         allowlist_buf,
         root_policy_buf,

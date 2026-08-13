@@ -41,11 +41,11 @@ class SendGateError(Exception):
 
 
 def _bridge_dir() -> pathlib.Path:
-    override = os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
+    override = os.environ.get("IMESSAGE_BRIDGE_DIR") or os.environ.get("COWORK_IMESSAGE_BRIDGE_DIR")
     if not override:
         raise RuntimeError(
-            "COWORK_IMESSAGE_BRIDGE_DIR is required; "
-            "the ~/cowork-imessage default is retired"
+            "IMESSAGE_BRIDGE_DIR is required "
+            "(COWORK_IMESSAGE_BRIDGE_DIR still accepted for one release)"
         )
     return pathlib.Path(os.path.abspath(os.path.expanduser(override)))
 
