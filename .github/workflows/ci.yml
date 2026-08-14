@@ -31,7 +31,7 @@ jobs:
       - run: bash -n uninstall.sh
       - run: bash -n uninstall-hardened.sh
       - run: shellcheck install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh tools/select_python.sh
-      - run: python tools/check_version.py v1.2.0
+      - run: python tools/check_version.py v1.2.1
 
   macos:
     runs-on: macos-latest
