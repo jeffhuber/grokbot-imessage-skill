@@ -6,6 +6,12 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Harden hardened-install Python selection by validating interpreter ownership
+  and path permissions before executing a compatibility probe.
+- Report shell-only `chat.db` access accurately in `doctor.py`; the wrapper's Full
+  Disk Access remains verified by the smoke test.
+- Pin setup-python by commit and prevent release checkout credential persistence.
+
 ## 1.2.1 - 2026-08-13
 
 - Select and validate one supported Python interpreter for installer tasks and

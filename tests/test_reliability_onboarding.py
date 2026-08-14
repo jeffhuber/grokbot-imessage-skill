@@ -59,18 +59,49 @@ class LaunchAgentIdentityTests(unittest.TestCase):
                 self.assertNotEqual(failed.returncode, 0, invalid)
                 self.assertEqual(failed.stdout, "", invalid)
 
-            for name in ("install.sh", "install-hardened.sh"):
-                source = (REPO_ROOT / name).read_text(encoding="utf-8")
-                self.assertIn('source "$PYTHON_SELECTOR"', source, name)
-                self.assertIn(
-                    'PYTHON3_PATH="$(find_supported_python)"', source, name
-                )
+            standard = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
             hardened = (REPO_ROOT / "install-hardened.sh").read_text(
                 encoding="utf-8"
             )
+            self.assertIn('source "$PYTHON_SELECTOR"', standard)
+            self.assertIn('source "$PYTHON_SELECTOR"', hardened)
+            self.assertIn('PYTHON3_PATH="$(find_supported_python 0)"', standard)
+            self.assertIn('PYTHON3_PATH="$(find_supported_python 1)"', hardened)
             self.assertIn(
                 'hardened_python_is_trusted "$PYTHON3_PATH"', hardened
             )
+
+    def test_hardened_selection_rejects_before_executing_untrusted_override(self) -> None:
+        selector = REPO_ROOT / "tools" / "select_python.sh"
+        with tempfile.TemporaryDirectory(prefix="grokbot-python-marker-") as td:
+            root = Path(td)
+            marker = root / "executed"
+            candidate = root / "python3"
+            candidate.write_text(
+                '#!/bin/sh\nprintf "executed\\n" > "$MARKER"\nexit 0\n',
+                encoding="utf-8",
+            )
+            candidate.chmod(0o755)
+            env = os.environ.copy()
+            env["IMESSAGE_PYTHON"] = str(candidate)
+            env["MARKER"] = str(marker)
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$1"; find_supported_python 1',
+                    "selector-test",
+                    str(selector),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            executed = marker.exists()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(executed)
 
     @unittest.skipUnless(sys.platform == "darwin", "macOS stat semantics")
     def test_hardened_python_rejects_user_writable_paths(self) -> None:
@@ -395,7 +426,8 @@ class DoctorTests(unittest.TestCase):
 
     def test_doctor_json_passes_for_synthetic_install(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-doctor-test-") as td:
-            bridge = Path(os.path.realpath(td)) / "bridge"
+            root = Path(os.path.realpath(td))
+            bridge = root / "bridge"
             for directory in (
                 bridge / "bin",
                 bridge / "control" / "requests",
@@ -428,6 +460,11 @@ class DoctorTests(unittest.TestCase):
             log = bridge / "control" / "log.txt"
             log.write_text("")
             log.chmod(0o600)
+            home = root / "home"
+            home.mkdir()
+            chat_db = home / "Library" / "Messages" / "chat.db"
+            chat_db.parent.mkdir(parents=True)
+            chat_db.write_bytes(b"fixture")
 
             result = subprocess.run(
                 [
@@ -439,15 +476,19 @@ class DoctorTests(unittest.TestCase):
                     "--skip-grok",
                     "--skip-launchd",
                     "--skip-codesign",
-                    "--skip-chat-db",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
+                env={**os.environ, "HOME": str(home)},
             )
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(json.loads(result.stdout)["ok"])
+        report = json.loads(result.stdout)
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["checks"]["chat_db"]["status"], "warn")
+        self.assertIn("does not test wrapper FDA", report["checks"]["chat_db"]["detail"])
+        self.assertIn("readable to this doctor process", report["checks"]["chat_db"]["detail"])
 
     def test_doctor_rejects_symlinked_bridge_ancestor(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-doctor-symlink-test-") as td:
