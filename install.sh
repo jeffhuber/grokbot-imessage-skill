@@ -44,6 +44,7 @@ LEGACY_LABEL="com.user.cowork-imessage"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 LEGACY_WRAPPER="$BIN_DIR/cowork-imessage-helper"
 LEGACY_MIGRATOR="$INSTALL_ROOT/tools/migrate_legacy_launchagent.py"
+PYTHON_SELECTOR="$INSTALL_ROOT/tools/select_python.sh"
 INSTALL_GROK_SKILL="${INSTALL_GROK_SKILL:-1}"
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
@@ -51,25 +52,12 @@ green() { printf "\033[32m%s\033[0m\n" "$*"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
 red() { printf "\033[31m%s\033[0m\n" "$*" 1>&2; }
 
-find_supported_python() {
-    local candidate
-    local resolved
-    for candidate in "${IMESSAGE_PYTHON:-}" /usr/bin/python3 \
-        python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
-        [[ -n "$candidate" ]] || continue
-        if [[ "$candidate" == */* ]]; then
-            resolved="$candidate"
-        else
-            resolved="$(command -v "$candidate" 2>/dev/null || true)"
-        fi
-        if [[ -x "$resolved" ]] &&
-            "$resolved" -c 'import os, sys; raise SystemExit(sys.version_info < (3, 9) or os.open not in os.supports_dir_fd)' 2>/dev/null; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-    done
-    return 1
-}
+if [[ ! -f "$PYTHON_SELECTOR" || -L "$PYTHON_SELECTOR" ]]; then
+    red "Missing regular Python selector: $PYTHON_SELECTOR"
+    exit 1
+fi
+# shellcheck source=tools/select_python.sh
+source "$PYTHON_SELECTOR"
 
 require_safe_runtime_entry() {
     local path="$1"
@@ -114,6 +102,7 @@ done
 
 if ! PYTHON3_PATH="$(find_supported_python)"; then
     red "Python 3.9 or newer with dir_fd support is required."
+    red "If IMESSAGE_PYTHON is set, it must name a supported interpreter."
     exit 1
 fi
 

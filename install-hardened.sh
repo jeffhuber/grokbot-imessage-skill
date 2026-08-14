@@ -28,30 +28,18 @@ LEGACY_LABEL="com.user.cowork-imessage"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 LEGACY_WRAPPER="$CODE_ROOT/bin/cowork-imessage-helper"
 LEGACY_MIGRATOR="$SOURCE_ROOT/tools/migrate_legacy_launchagent.py"
+PYTHON_SELECTOR="$SOURCE_ROOT/tools/select_python.sh"
 ALLOWLIST="$CONFIG_ROOT/allowed_chats.txt"
 CURRENT_USER="$(id -un)"
 BUILD_DIR="$(mktemp -d -t grokbot-imessage-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
-find_supported_python() {
-    local candidate
-    local resolved
-    for candidate in "${IMESSAGE_PYTHON:-}" /usr/bin/python3 \
-        python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
-        [[ -n "$candidate" ]] || continue
-        if [[ "$candidate" == */* ]]; then
-            resolved="$candidate"
-        else
-            resolved="$(command -v "$candidate" 2>/dev/null || true)"
-        fi
-        if [[ -x "$resolved" ]] &&
-            "$resolved" -c 'import os, sys; raise SystemExit(sys.version_info < (3, 9) or os.open not in os.supports_dir_fd)' 2>/dev/null; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-    done
-    return 1
-}
+if [[ ! -f "$PYTHON_SELECTOR" || -L "$PYTHON_SELECTOR" ]]; then
+    echo "Error: missing regular Python selector: $PYTHON_SELECTOR" >&2
+    exit 1
+fi
+# shellcheck source=tools/select_python.sh
+source "$PYTHON_SELECTOR"
 
 require_safe_runtime_entry() {
     local path="$1"
@@ -82,6 +70,13 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 if ! PYTHON3_PATH="$(find_supported_python)"; then
     echo "Error: Python 3.9 or newer with dir_fd support is required." >&2
+    echo "If IMESSAGE_PYTHON is set, it must name a supported interpreter." >&2
+    exit 1
+fi
+if ! hardened_python_is_trusted "$PYTHON3_PATH"; then
+    echo "Error: hardened mode requires a root-owned Python interpreter" >&2
+    echo "whose file and parent directories are not symlinks or group/world-writable." >&2
+    echo "Use /usr/bin/python3, provide a trusted IMESSAGE_PYTHON path, or run ./install.sh." >&2
     exit 1
 fi
 
@@ -92,6 +87,7 @@ for path in \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" \
     "$SOURCE_ROOT/tools/doctor.py" \
     "$SOURCE_ROOT/tools/configure_allowlist.py" \
+    "$PYTHON_SELECTOR" \
     "$LEGACY_MIGRATOR" \
     "$SOURCE_ROOT/contacts/blocked_chats.txt.template" \
     "$SOURCE_ROOT/contacts/allowed_chats.txt.template" \
