@@ -6,6 +6,12 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Select and validate one supported Python interpreter for installer tasks and
+  the FDA wrapper, even when an older `python3` appears first on `PATH`.
+- Fail closed on an invalid `IMESSAGE_PYTHON`; hardened installs require a
+  root-owned interpreter path that another user process cannot replace.
+- Validate one deterministic ISO-dated changelog heading during release checks.
+
 ## 1.2.0 - 2026-08-13
 
 - Adopt shared-core manifest for deterministic cross-repo comparison with Claude

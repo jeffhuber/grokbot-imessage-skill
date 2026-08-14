@@ -44,12 +44,20 @@ LEGACY_LABEL="com.user.cowork-imessage"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 LEGACY_WRAPPER="$BIN_DIR/cowork-imessage-helper"
 LEGACY_MIGRATOR="$INSTALL_ROOT/tools/migrate_legacy_launchagent.py"
+PYTHON_SELECTOR="$INSTALL_ROOT/tools/select_python.sh"
 INSTALL_GROK_SKILL="${INSTALL_GROK_SKILL:-1}"
 
 bold() { printf "\033[1m%s\033[0m\n" "$*"; }
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$*"; }
 red() { printf "\033[31m%s\033[0m\n" "$*" 1>&2; }
+
+if [[ ! -f "$PYTHON_SELECTOR" || -L "$PYTHON_SELECTOR" ]]; then
+    red "Missing regular Python selector: $PYTHON_SELECTOR"
+    exit 1
+fi
+# shellcheck source=tools/select_python.sh
+source "$PYTHON_SELECTOR"
 
 require_safe_runtime_entry() {
     local path="$1"
@@ -85,15 +93,16 @@ if ! xcode-select -p >/dev/null 2>&1; then
     exit 1
 fi
 
-for cmd in clang codesign launchctl python3; do
+for cmd in clang codesign launchctl; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         red "Required command not found: $cmd"
         exit 1
     fi
 done
 
-if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
-    red "Python 3.9 or newer is required. Found: $(python3 --version 2>&1)"
+if ! PYTHON3_PATH="$(find_supported_python)"; then
+    red "Python 3.9 or newer with dir_fd support is required."
+    red "If IMESSAGE_PYTHON is set, it must name a supported interpreter."
     exit 1
 fi
 
@@ -194,11 +203,6 @@ green "  chmod 500 $HELPER_PY and $SEND_GATE_PY"
 
 # ---- 4. build wrapper binary --------------------------------------------
 bold "Building wrapper binary..."
-PYTHON3_PATH="$(command -v python3)"
-# Prefer the stable system path if available; it's a more predictable FDA target.
-if [[ -x /usr/bin/python3 ]]; then
-    PYTHON3_PATH="/usr/bin/python3"
-fi
 
 clang -Wall -Wextra -Werror -O2 \
     -DHELPER_SCRIPT="\"$HELPER_PY\"" \
@@ -234,7 +238,7 @@ echo "  cdhash: ${CDHASH:-unknown}"
 mkdir -p "$(dirname "$PLIST_DEST")"
 
 # Use Python to generate the plist with proper XML escaping instead of sed.
-python3 - "$INSTALL_ROOT" "$INSTALL_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
+"$PYTHON3_PATH" - "$INSTALL_ROOT" "$INSTALL_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
 import sys, xml.etree.ElementTree as ET
 
 code_root, bridge_root, dest, template = sys.argv[1:]
@@ -258,7 +262,7 @@ green "  wrote $PLIST_DEST"
 # Claim the legacy identity only when it points to this exact prior Grok
 # installation. A Claude installation using the old shared label is left alone.
 if [[ -e "$LEGACY_PLIST" || -L "$LEGACY_PLIST" ]]; then
-    if python3 "$LEGACY_MIGRATOR" \
+    if "$PYTHON3_PATH" "$LEGACY_MIGRATOR" \
         --plist "$LEGACY_PLIST" \
         --program "$LEGACY_WRAPPER" \
         --watch "$INSTALL_ROOT/control/requests"; then
@@ -314,8 +318,8 @@ echo "  (This is a separate permission from Full Disk Access.)"
 echo
 echo "Logs: $CONTROL_DIR/log.txt"
 if [[ "$INSTALL_GROK_SKILL" == "1" ]]; then
-    echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT"
+    echo "Doctor: \"$PYTHON3_PATH\" $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT"
 else
-    echo "Doctor: python3 $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT --skip-grok"
+    echo "Doctor: \"$PYTHON3_PATH\" $INSTALL_ROOT/tools/doctor.py --bridge $INSTALL_ROOT --skip-grok"
 fi
 echo "Uninstall: ./uninstall.sh"
