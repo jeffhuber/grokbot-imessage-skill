@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest import mock
 
@@ -72,6 +73,32 @@ class ReleaseVersionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(check_version.frontmatter_version(skill), "1.2.0")
+
+    def test_shared_core_version_requires_a_string(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grok-version-check-") as td:
+            root = Path(td)
+            (root / "shared-core.json").write_text(
+                '{"identity":{"helper_version":120}}', encoding="utf-8"
+            )
+            with mock.patch.object(check_version, "REPO_ROOT", root):
+                with self.assertRaisesRegex(RuntimeError, "identity.helper_version"):
+                    check_version.shared_core_version()
+
+    def test_shared_core_mismatch_fails_release_check(self) -> None:
+        versions = {
+            "helper_version": "1.2.0",
+            "skill_version": "1.2.0",
+            "shared_core_version": "1.1.0",
+            "check_changelog": (True, ""),
+        }
+        with ExitStack() as stack:
+            stack.enter_context(mock.patch("sys.argv", ["check_version.py", "v1.2.0"]))
+            stack.enter_context(mock.patch("builtins.print"))
+            for name, value in versions.items():
+                stack.enter_context(
+                    mock.patch.object(check_version, name, return_value=value)
+                )
+            self.assertEqual(check_version.main(), 1)
 
 
 if __name__ == "__main__":

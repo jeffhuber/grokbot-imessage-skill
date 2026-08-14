@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -51,6 +52,16 @@ def skill_version() -> str:
     return frontmatter_version(REPO_ROOT / "SKILL.md")
 
 
+def shared_core_version() -> str:
+    payload = json.loads(
+        (REPO_ROOT / "shared-core.json").read_text(encoding="utf-8")
+    )
+    version = payload.get("identity", {}).get("helper_version")
+    if not isinstance(version, str):
+        raise RuntimeError("identity.helper_version not found in shared-core.json")
+    return version
+
+
 def check_changelog(expected_version: str) -> tuple[bool, str]:
     content = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     pattern = (
@@ -80,7 +91,11 @@ def main() -> int:
     args = parser.parse_args()
 
     expected = args.tag[1:] if args.tag.startswith("v") else args.tag
-    versions = {"helper": helper_version(), "skill": skill_version()}
+    versions = {
+        "helper": helper_version(),
+        "skill": skill_version(),
+        "shared-core": shared_core_version(),
+    }
     mismatches = {name: version for name, version in versions.items() if version != expected}
     if mismatches:
         for name, version in mismatches.items():
