@@ -20,9 +20,9 @@ install the helper.
 
 Both paths go through a single on-device helper process: a Python
 script (`helper.py`) launched by a locally signed C wrapper via a
-user-scoped `launchd` LaunchAgent. The C wrapper exists solely to give
-the helper a stable `CDHash`, which is what macOS TCC uses to identify
-the process holding Full Disk Access.
+user-scoped `launchd` LaunchAgent. The C wrapper gives the helper a stable
+`CDHash`, validates the executable components and policy configuration, and
+sets a minimal environment before Python starts.
 
 ## Permissions required, and what each one actually grants
 
@@ -40,9 +40,10 @@ to read:
   `Library/Application Support/*`).
 - Any user file that isn't itself TCC-gated.
 
-The plugin *code* only reads `chat.db`. But a bug or compromise in
-the helper becomes a full-user-file-read primitive, not just a
-Messages leak. Treat that as the blast radius.
+The read path targets `chat.db` plus local Contacts data used for name
+resolution. But a bug or compromise in the helper becomes a
+full-user-file-read primitive, not just a Messages leak. Treat that as the
+blast radius.
 
 ### The CDHash pins the wrapper, not the Python
 
@@ -106,7 +107,7 @@ group-chat creation — those aren't in the AppleScript surface.
 ## Trust boundaries
 
 The helper communicates with Grok Bot (or other AI hosts) via a **bridge folder** — a
-mode-700 directory under the user's home directory (e.g., `~/imessage-bridge/`)
+mode-700 directory under the user's home directory (e.g., `~/imessage-bridge-grok/`)
 where the AI writes request files and the helper writes response
 files. `launchd`'s `WatchPaths` triggers the helper on change.
 
@@ -277,10 +278,9 @@ You can verify what's actually on your disk:
 - All source is in this repository. Read `bin/helper.py` and
   `bin/send_gate.py`; they run inside the FDA-granted Python process. The
   native confirmation source is `bin/confirm_imessage_send.m`.
-- The C wrapper source is in `bin/imessage_helper.c`. It does
-  approximately nothing — it exists to stabilize the CDHash. You can
-  rebuild it yourself; the README documents the one-line `clang` command
-  used by `install.sh`.
+- The C wrapper source is `bin/imessage_helper.c`. It stabilizes the CDHash,
+  validates every executable component and policy path, sets a minimal
+  environment, and then executes Python.
 - Verify the repository contents match a tagged GitHub release. Release source
   archives include a `SHA256SUMS` file, and the source is small enough to diff
   against a local clone.
@@ -294,8 +294,9 @@ You can verify what's actually on your disk:
 
 To fully remove the helper's access:
 
-1. Run `./uninstall.sh` in the bridge folder.
-2. Delete the bridge folder: `rm -rf ~/imessage-bridge` (or wherever
+1. Run `./uninstall-hardened.sh` or `./uninstall.sh`, matching the installer you
+   used.
+2. Delete the bridge folder: `rm -rf ~/imessage-bridge-grok` (or wherever
    you installed it).
 3. System Settings → Privacy & Security → Full Disk Access → remove
    `grokbot-imessage-helper`.

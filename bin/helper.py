@@ -78,7 +78,7 @@ CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "grokbot-imessage-confirm"
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
 HOST_DISPLAY_NAME = os.environ.get("IMESSAGE_HOST_DISPLAY_NAME", "Grok Bot")
 
-HELPER_VERSION = "1.2.1"
+HELPER_VERSION = "1.2.2"
 PROTOCOL_VERSION = "1.1"
 
 # ---------------------------------------------------------------------------
