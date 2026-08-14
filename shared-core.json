@@ -5,7 +5,7 @@
     "host_display_name": "Grok Bot",
     "wrapper_name": "grokbot-imessage-helper",
     "confirmation_name": "grokbot-imessage-confirm",
-    "helper_version": "1.2.0",
+    "helper_version": "1.2.1",
     "product_id": "grokbot-imessage",
     "launchd_label": "com.jeffhuber.grokbot-imessage"
   },

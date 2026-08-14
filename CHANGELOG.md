@@ -6,6 +6,8 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.2.1 - 2026-08-13
+
 - Select and validate one supported Python interpreter for installer tasks and
   the FDA wrapper, even when an older `python3` appears first on `PATH`.
 - Fail closed on an invalid `IMESSAGE_PYTHON`; hardened installs require a
