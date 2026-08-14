@@ -356,6 +356,9 @@ intentionally skipped the Grok Build skill copy:
 python3 tools/doctor.py --bridge "/path/to/your/bridge-folder"
 ```
 
+The doctor can only test whether its own shell process reads `chat.db`; use
+the smoke test as the authoritative check of the wrapper's Full Disk Access.
+
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | No response files appear | FDA not granted | Grant FDA to the exact wrapper path printed by the installer |
