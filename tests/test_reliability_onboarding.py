@@ -462,6 +462,9 @@ class DoctorTests(unittest.TestCase):
             log.chmod(0o600)
             home = root / "home"
             home.mkdir()
+            chat_db = home / "Library" / "Messages" / "chat.db"
+            chat_db.parent.mkdir(parents=True)
+            chat_db.write_bytes(b"fixture")
 
             result = subprocess.run(
                 [
@@ -485,6 +488,7 @@ class DoctorTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(report["checks"]["chat_db"]["status"], "warn")
         self.assertIn("does not test wrapper FDA", report["checks"]["chat_db"]["detail"])
+        self.assertIn("readable to this doctor process", report["checks"]["chat_db"]["detail"])
 
     def test_doctor_rejects_symlinked_bridge_ancestor(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-doctor-symlink-test-") as td:

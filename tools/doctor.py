@@ -162,9 +162,10 @@ def inspect_install(args: argparse.Namespace) -> dict[str, Any]:
         chat_db = pathlib.Path.home() / "Library" / "Messages" / "chat.db"
         ok = chat_db.is_file() and os.access(chat_db, os.R_OK)
         checks["chat_db"] = check(
-            "pass" if ok else "warn",
+            "warn",
             (
-                f"{chat_db} readable to this doctor process; wrapper FDA is separate"
+                f"{chat_db} readable to this doctor process; this does not test "
+                "wrapper FDA. Run the smoke test to verify wrapper access"
                 if ok
                 else f"{chat_db} not readable to this doctor process; this does not "
                 "test wrapper FDA. Run the smoke test to verify wrapper access"
