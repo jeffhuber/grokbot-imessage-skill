@@ -54,7 +54,7 @@ class LaunchAgentIdentityTests(unittest.TestCase):
             self.assertEqual(override.returncode, 0, override.stderr)
             self.assertEqual(override.stdout.strip(), sys.executable)
 
-            for invalid in (str(unsupported), ""):
+            for invalid in (str(unsupported), "", "python3"):
                 failed = select(invalid)
                 self.assertNotEqual(failed.returncode, 0, invalid)
                 self.assertEqual(failed.stdout, "", invalid)

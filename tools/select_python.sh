@@ -22,6 +22,7 @@ find_supported_python() {
     local resolved
 
     if [[ "${IMESSAGE_PYTHON+x}" == "x" ]]; then
+        [[ "$IMESSAGE_PYTHON" == /* ]] || return 1
         resolved="$(_imessage_python_path "$IMESSAGE_PYTHON")" || return 1
         _imessage_python_is_supported "$resolved" || return 1
         printf '%s\n' "$resolved"
