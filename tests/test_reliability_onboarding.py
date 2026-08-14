@@ -65,7 +65,7 @@ class LaunchAgentIdentityTests(unittest.TestCase):
             )
             self.assertIn('source "$PYTHON_SELECTOR"', standard)
             self.assertIn('source "$PYTHON_SELECTOR"', hardened)
-            self.assertIn('PYTHON3_PATH="$(find_supported_python)"', standard)
+            self.assertIn('PYTHON3_PATH="$(find_supported_python 0)"', standard)
             self.assertIn('PYTHON3_PATH="$(find_supported_python 1)"', hardened)
             self.assertIn(
                 'hardened_python_is_trusted "$PYTHON3_PATH"', hardened
