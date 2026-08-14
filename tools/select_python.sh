@@ -17,29 +17,6 @@ _imessage_python_is_supported() {
         "$candidate" -c 'import os, sys; raise SystemExit(sys.version_info < (3, 9) or os.open not in os.supports_dir_fd)' 2>/dev/null
 }
 
-find_supported_python() {
-    local candidate
-    local resolved
-
-    if [[ "${IMESSAGE_PYTHON+x}" == "x" ]]; then
-        [[ "$IMESSAGE_PYTHON" == /* ]] || return 1
-        resolved="$(_imessage_python_path "$IMESSAGE_PYTHON")" || return 1
-        _imessage_python_is_supported "$resolved" || return 1
-        printf '%s\n' "$resolved"
-        return 0
-    fi
-
-    for candidate in /usr/bin/python3 \
-        python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
-        resolved="$(_imessage_python_path "$candidate")" || continue
-        if _imessage_python_is_supported "$resolved"; then
-            printf '%s\n' "$resolved"
-            return 0
-        fi
-    done
-    return 1
-}
-
 hardened_python_is_trusted() {
     local current="$1"
     local mode
@@ -56,4 +33,35 @@ hardened_python_is_trusted() {
         current="${current%/*}"
         [[ -n "$current" ]] || current="/"
     done
+}
+
+find_supported_python() {
+    local require_trusted="${1:-0}"
+    local candidate
+    local resolved
+
+    if [[ "${IMESSAGE_PYTHON+x}" == "x" ]]; then
+        [[ "$IMESSAGE_PYTHON" == /* ]] || return 1
+        resolved="$(_imessage_python_path "$IMESSAGE_PYTHON")" || return 1
+        if [[ "$require_trusted" == "1" ]]; then
+            hardened_python_is_trusted "$resolved" || return 1
+        fi
+        _imessage_python_is_supported "$resolved" || return 1
+        printf '%s\n' "$resolved"
+        return 0
+    fi
+
+    for candidate in /usr/bin/python3 \
+        python3.14 python3.13 python3.12 python3.11 python3.10 python3.9 python3; do
+        resolved="$(_imessage_python_path "$candidate")" || continue
+        if [[ "$require_trusted" == "1" ]] &&
+            ! hardened_python_is_trusted "$resolved"; then
+            continue
+        fi
+        if _imessage_python_is_supported "$resolved"; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    done
+    return 1
 }
