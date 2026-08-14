@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import re
 import sqlite3
 import stat
 import subprocess
@@ -16,6 +17,47 @@ from tests._helper_loader import REPO_ROOT, helper
 
 
 class LaunchAgentIdentityTests(unittest.TestCase):
+    def test_installers_skip_an_unsupported_path_python(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="grokbot-python-") as td:
+            fake_bin = Path(td)
+            unsupported = fake_bin / "python3"
+            unsupported.write_text("#!/bin/sh\nexit 97\n", encoding="utf-8")
+            unsupported.chmod(0o755)
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
+
+            for name in ("install.sh", "install-hardened.sh"):
+                source = (REPO_ROOT / name).read_text(encoding="utf-8")
+                match = re.search(
+                    r"(?ms)^find_supported_python\(\) \{\n.*?^\}\n",
+                    source,
+                )
+                self.assertIsNotNone(match, name)
+                result = subprocess.run(
+                    ["bash", "-c", f"{match.group(0)}\nfind_supported_python"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = result.stdout.strip()
+                self.assertNotEqual(Path(selected), unsupported, name)
+                probe = subprocess.run(
+                    [
+                        selected,
+                        "-c",
+                        "import os, sys; raise SystemExit("
+                        "sys.version_info < (3, 9) or "
+                        "os.open not in os.supports_dir_fd)",
+                    ],
+                    check=False,
+                )
+                self.assertEqual(probe.returncode, 0, name)
+                self.assertIn(
+                    'PYTHON3_PATH="$(find_supported_python)"', source, name
+                )
+
     def _write_plist(self, path: Path, program: str, watch: str) -> None:
         with path.open("wb") as stream:
             plistlib.dump(

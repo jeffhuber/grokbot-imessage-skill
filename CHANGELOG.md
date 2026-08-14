@@ -6,6 +6,9 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Select and validate one supported Python interpreter for installer tasks and
+  the FDA wrapper, even when an older `python3` appears first on `PATH`.
+
 ## 1.2.0 - 2026-08-13
 
 - Adopt shared-core manifest for deterministic cross-repo comparison with Claude
