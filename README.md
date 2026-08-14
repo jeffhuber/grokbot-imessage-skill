@@ -4,6 +4,10 @@
 
 This repository provides a **Grok Bot skill** that lets Grok Bot interact with your iMessages on macOS. A local launchd helper reads your Messages database and sends via AppleScript. The helper makes no network requests, but message content selected for Grok is processed through xAI's normal service pipeline.
 
+This is an independent open-source project by Jeff Huber. It is not made,
+endorsed, or supported by Apple or xAI. Report vulnerabilities privately as
+described in [SECURITY.md](./SECURITY.md).
+
 ---
 
 ## What This Does
@@ -46,7 +50,18 @@ iMessage helpers.
 
 ## Installation (5–10 minutes)
 
-### 1. Clone this repository
+### 1. Get a verified release
+
+For a reproducible install, download every asset from the
+[latest release](../../releases/latest), then verify them:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+Unpack the verified archive and enter its directory. Release archives contain
+source only; the macOS binaries are compiled and signed locally. To contribute
+or follow `main` instead, clone the repository:
 
 ```bash
 git clone https://github.com/jeffhuber/grokbot-imessage-skill.git
@@ -73,16 +88,16 @@ Run `./install.sh` from the repository:
 Or copy it to a dedicated folder first:
 
 ```bash
-mkdir ~/imessage-bridge
+mkdir ~/imessage-bridge-grok
 cp -r bin/ tools/ contacts/ SKILL.md install.sh install-hardened.sh \
   install-skill.sh uninstall.sh uninstall-hardened.sh \
-  com.jeffhuber.grokbot-imessage.plist.template ~/imessage-bridge/
-cd ~/imessage-bridge && ./install.sh
+  com.jeffhuber.grokbot-imessage.plist.template ~/imessage-bridge-grok/
+cd ~/imessage-bridge-grok && ./install.sh
 ```
 
-The standard installer does not require `sudo` and is the fastest way to get started. 
-Its Python code is writable by processes running as your user. Its default `blocklist` 
-policy is intended to prevent accidental disclosure, not resist a compromised same-user 
+The standard installer does not require `sudo` and is the fastest way to get started.
+Its Python code is writable by processes running as your user. Its default `blocklist`
+policy is intended to prevent accidental disclosure, not resist a compromised same-user
 process.
 
 **Hardened install:**
@@ -214,6 +229,15 @@ chat123456789
 
 Phone numbers match by last 10 digits. Emails and group IDs match case-insensitively.
 The blocklist always takes precedence, including for sends.
+
+### Redaction Limitations
+
+The helper masks verification codes in recognized contexts, card-like digit
+runs, and US SSNs before writing response JSON. This regex redaction is
+best-effort, not a DLP boundary: context-free codes and PINs, API keys, bank or
+routing numbers, addresses, dates of birth, and alternative separators can pass
+through. Treat the blocklist or hardened allowlist as the primary disclosure
+boundary.
 
 ### Send Gate (Preview-and-Confirm)
 
@@ -438,11 +462,15 @@ PRs welcome! If you find a bug or want to add a feature:
 1. Open an issue first to discuss the change.
 2. Submit a PR with tests under `tests/`.
 3. Follow the existing code style (Python 3.9+, type hints where helpful).
-4. Run `python3 -m unittest discover -s tests -v`, `bash -n` on the shell
-   scripts, and the native compile checks from `.github/workflows/ci.yml`.
+4. Run `./tools/test.sh`, `bash -n` and `shellcheck` on the shell scripts,
+   and the native compile checks from `.github/workflows/ci.yml`.
 5. For shared-core changes, follow [the cross-repository procedure](docs/SHARED_CORE.md).
 
 **Security issues:** Email <jhuber+grokbotimessage@gmail.com> instead of opening a public issue. See **[SECURITY.md](./SECURITY.md)** for details.
+
+`tools/test.sh` selects and prints one supported Python interpreter before any
+test runs, so an unsupported `python3` earlier on `PATH` cannot produce a
+misleading full-suite failure.
 
 ---
 
