@@ -71,6 +71,7 @@ fi
 if ! PYTHON3_PATH="$(find_supported_python 1)"; then
     echo "Error: hardened mode requires a trusted Python 3.9 or newer" >&2
     echo "with dir_fd support. Its file and parents must be root-owned and protected." >&2
+    echo "IMESSAGE_PYTHON, when set, must be an absolute trusted path." >&2
     exit 1
 fi
 if ! hardened_python_is_trusted "$PYTHON3_PATH"; then

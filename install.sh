@@ -102,7 +102,7 @@ done
 
 if ! PYTHON3_PATH="$(find_supported_python 0)"; then
     red "Python 3.9 or newer with dir_fd support is required."
-    red "If IMESSAGE_PYTHON is set, it must name a supported interpreter."
+    red "If IMESSAGE_PYTHON is set, it must be an absolute path to a supported interpreter."
     exit 1
 fi
 

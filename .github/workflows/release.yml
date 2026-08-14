@@ -15,16 +15,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Verify signed annotated tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_OBJECT="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')"
+          VERIFIED="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT" \
+            --jq '.verification.verified == true and .verification.reason == "valid"')"
+          test "$VERIFIED" = "true"
       - name: Verify tag and source versions
-        run: python3 tools/check_version.py "$GITHUB_REF_NAME"
+        run: IMESSAGE_TEST_PYTHON="$(command -v python3)" ./tools/test.sh "$GITHUB_REF_NAME"
       - name: Run release checks
         run: |
           brew install shellcheck
-          python3 -m py_compile bin/helper.py bin/send_gate.py tools/doctor.py tools/check_shared_core.py tools/check_version.py tools/configure_allowlist.py tools/migrate_legacy_launchagent.py
-          python3 -m unittest discover -s tests -v
-          python3 tools/check_shared_core.py
-          bash -n install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh tools/select_python.sh
-          shellcheck install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh tools/select_python.sh
+          bash -n install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh tools/select_python.sh tools/test.sh
+          shellcheck install.sh install-hardened.sh install-skill.sh uninstall.sh uninstall-hardened.sh tools/select_python.sh tools/test.sh
           plutil -lint com.jeffhuber.grokbot-imessage.plist.template
           clang -Wall -Wextra -Werror -O2 \
             -DHELPER_SCRIPT='"/tmp/helper.py"' \
@@ -50,4 +55,7 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
+          gh release upload "$GITHUB_REF_NAME" dist/*
+          gh release edit "$GITHUB_REF_NAME" --draft=false
