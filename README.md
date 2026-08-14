@@ -26,6 +26,13 @@ This repository provides a **Grok Bot skill** that lets Grok Bot interact with y
 - **Full Disk Access** permission (to read `~/Library/Messages/chat.db`)
 - **Automation → Messages** permission (to send messages via AppleScript)
 
+To select a specific interpreter, scope an absolute override to one install,
+for example `IMESSAGE_PYTHON=/opt/python/bin/python3 ./install.sh`. An explicitly
+set but unsupported value fails closed. Hardened mode additionally requires the
+interpreter and every parent directory to be root-owned and not group/world-
+writable; avoid exporting this shared override globally when using sibling
+iMessage helpers.
+
 ### Compatibility
 
 | Component | Supported and verified | Notes |

@@ -28,10 +28,18 @@ LEGACY_LABEL="com.user.cowork-imessage"
 LEGACY_PLIST="$HOME/Library/LaunchAgents/$LEGACY_LABEL.plist"
 LEGACY_WRAPPER="$CODE_ROOT/bin/cowork-imessage-helper"
 LEGACY_MIGRATOR="$SOURCE_ROOT/tools/migrate_legacy_launchagent.py"
+PYTHON_SELECTOR="$SOURCE_ROOT/tools/select_python.sh"
 ALLOWLIST="$CONFIG_ROOT/allowed_chats.txt"
 CURRENT_USER="$(id -un)"
 BUILD_DIR="$(mktemp -d -t grokbot-imessage-build.XXXXXX)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
+
+if [[ ! -f "$PYTHON_SELECTOR" || -L "$PYTHON_SELECTOR" ]]; then
+    echo "Error: missing regular Python selector: $PYTHON_SELECTOR" >&2
+    exit 1
+fi
+# shellcheck source=tools/select_python.sh
+source "$PYTHON_SELECTOR"
 
 require_safe_runtime_entry() {
     local path="$1"
@@ -50,7 +58,7 @@ require_safe_runtime_entry() {
     fi
 }
 
-for cmd in clang codesign launchctl python3 sudo; do
+for cmd in clang codesign launchctl sudo; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "Error: required command not found: $cmd" >&2
         exit 1
@@ -60,8 +68,15 @@ if ! xcode-select -p >/dev/null 2>&1; then
     echo "Error: install Xcode Command Line Tools with xcode-select --install" >&2
     exit 1
 fi
-if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 9))'; then
-    echo "Error: Python 3.9 or newer is required." >&2
+if ! PYTHON3_PATH="$(find_supported_python)"; then
+    echo "Error: Python 3.9 or newer with dir_fd support is required." >&2
+    echo "If IMESSAGE_PYTHON is set, it must name a supported interpreter." >&2
+    exit 1
+fi
+if ! hardened_python_is_trusted "$PYTHON3_PATH"; then
+    echo "Error: hardened mode requires a root-owned Python interpreter" >&2
+    echo "whose file and parent directories are not symlinks or group/world-writable." >&2
+    echo "Use /usr/bin/python3, provide a trusted IMESSAGE_PYTHON path, or run ./install.sh." >&2
     exit 1
 fi
 
@@ -72,6 +87,7 @@ for path in \
     "$SOURCE_ROOT/bin/confirm_imessage_send.m" \
     "$SOURCE_ROOT/tools/doctor.py" \
     "$SOURCE_ROOT/tools/configure_allowlist.py" \
+    "$PYTHON_SELECTOR" \
     "$LEGACY_MIGRATOR" \
     "$SOURCE_ROOT/contacts/blocked_chats.txt.template" \
     "$SOURCE_ROOT/contacts/allowed_chats.txt.template" \
@@ -122,7 +138,7 @@ if [[ ! -e "$ALLOWLIST" ]]; then
     sudo /usr/bin/install -o root -g wheel -m 600 \
         "$SOURCE_ROOT/contacts/allowed_chats.txt.template" "$ALLOWLIST"
 fi
-if ! python3 - "$ALLOWLIST" <<'PYCHECK'; then
+if ! "$PYTHON3_PATH" - "$ALLOWLIST" <<'PYCHECK'; then
 import os
 import stat
 import sys
@@ -139,11 +155,6 @@ if ! sudo /bin/chmod -N "$ALLOWLIST" 2>/dev/null; then
     echo "  no existing ACL to clear"
 fi
 sudo /bin/chmod +a "user:$CURRENT_USER allow read" "$ALLOWLIST"
-
-PYTHON3_PATH="$(command -v python3)"
-if [[ -x /usr/bin/python3 ]]; then
-    PYTHON3_PATH="/usr/bin/python3"
-fi
 
 clang -Wall -Wextra -Werror -fobjc-arc \
     -framework AppKit -framework Foundation \
@@ -190,7 +201,7 @@ sudo /usr/bin/install -o root -g wheel -m 555 \
     "$SOURCE_ROOT/tools/configure_allowlist.py" "$CODE_ROOT/tools/configure_allowlist.py"
 
 mkdir -p "$(dirname "$PLIST_DEST")"
-python3 - "$CODE_ROOT" "$BRIDGE_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
+"$PYTHON3_PATH" - "$CODE_ROOT" "$BRIDGE_ROOT" "$PLIST_DEST" "$PLIST_TEMPLATE" <<'PYGEN'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -205,7 +216,7 @@ PYGEN
 chmod 644 "$PLIST_DEST"
 
 if [[ -e "$LEGACY_PLIST" || -L "$LEGACY_PLIST" ]]; then
-    if python3 "$LEGACY_MIGRATOR" \
+    if "$PYTHON3_PATH" "$LEGACY_MIGRATOR" \
         --plist "$LEGACY_PLIST" \
         --program "$LEGACY_WRAPPER" \
         --watch "$BRIDGE_ROOT/control/requests"; then
@@ -237,11 +248,11 @@ Runtime bridge (user-owned): $BRIDGE_ROOT
 Read policy: root-owned allowlist (default-deny)
 
 Add an allowed contact before reading:
-  python3 "$CODE_ROOT/tools/configure_allowlist.py" add +15551234567
+  "$PYTHON3_PATH" "$CODE_ROOT/tools/configure_allowlist.py" add +15551234567
 
 Grant Full Disk Access to:
   $CODE_ROOT/bin/grokbot-imessage-helper
 
 Then verify:
-  python3 "$CODE_ROOT/tools/doctor.py" --bridge "$BRIDGE_ROOT" --code-root "$CODE_ROOT"
+  "$PYTHON3_PATH" "$CODE_ROOT/tools/doctor.py" --bridge "$BRIDGE_ROOT" --code-root "$CODE_ROOT"
 EOF
