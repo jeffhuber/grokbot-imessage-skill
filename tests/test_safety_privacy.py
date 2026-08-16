@@ -430,5 +430,124 @@ class SensitiveArtifactTests(unittest.TestCase):
         self.assertEqual(plist.count("<string>/dev/null</string>"), 2)
 
 
+class Core5aTests(unittest.TestCase):
+    """CORE-5a follow-ups: read_policy ownership, root/uid precedence, send_gate check, env-plumbing."""
+
+    def test_read_policy_group_writable_does_not_switch_to_blocklist(self) -> None:
+        """Item 1: group-writable read_policy.txt saying 'blocklist' must NOT flip policy."""
+        with tempfile.TemporaryDirectory(prefix="core5a-read-policy-") as td:
+            policy_dir = Path(os.path.realpath(td))
+            policy_dir.chmod(0o700)
+            read_policy = policy_dir / "read_policy.txt"
+            read_policy.write_text("blocklist\n", encoding="utf-8")
+            read_policy.chmod(0o664)  # group-writable
+
+            with mock.patch.object(helper, "WRAPPER_MODE", "product"), mock.patch.object(
+                helper, "POLICY_ROOT", policy_dir
+            ), mock.patch.object(helper, "READ_POLICY_PATH", read_policy):
+                policy = helper.load_privacy_policy()
+
+            # Product mode rejects group-writable read_policy.txt → treats as missing → allowlist (fail-closed)
+            self.assertEqual(policy.mode, "allowlist")
+
+    def test_root_owned_allowlist_satisfies_uid_check(self) -> None:
+        """Item 2: root-owned allowlist under product mode should satisfy uid check."""
+        with tempfile.TemporaryDirectory(prefix="core5a-root-") as td:
+            policy_dir = Path(os.path.realpath(td))
+            policy_dir.chmod(0o700)
+            allowlist_path = policy_dir / "allowed_chats.txt"
+            allowlist_path.write_text("+14155551234\n", encoding="utf-8")
+            allowlist_path.chmod(0o600)
+            
+            # Create a mock stat result that looks root-owned
+            original_stat = allowlist_path.stat()
+            fake_stat = mock.Mock()
+            fake_stat.st_mode = stat.S_IFREG | 0o600
+            fake_stat.st_uid = 0  # root
+            fake_stat.st_size = original_stat.st_size
+            
+            # Patch Path.lstat at the module level where _load_list calls it
+            with mock.patch('pathlib.Path.lstat', return_value=fake_stat):
+                entries = helper._load_list(allowlist_path, require_uid_owner=True)
+            
+            # Root-owned should satisfy uid check (not be rejected)
+            self.assertEqual(entries, ("+14155551234",))
+
+    def test_send_gate_ownership_checked(self) -> None:
+        """Item 3: _load_send_gate should check file ownership and permissions."""
+        with tempfile.TemporaryDirectory(prefix="core5a-sendgate-") as td:
+            gate_dir = Path(os.path.realpath(td))
+            gate_dir.chmod(0o700)
+            gate_path = gate_dir / "send_gate.py"
+            gate_path.write_text("SEND_NONCE_TTL = 60\n", encoding="utf-8")
+            gate_path.chmod(0o664)  # group-writable
+            
+            with mock.patch.object(helper, "SEND_GATE_PATH", gate_path):
+                with self.assertRaisesRegex(RuntimeError, "must not be group/world-writable"):
+                    helper._load_send_gate()
+
+    def test_env_plumbing_product_mode(self) -> None:
+        """Item 4: env vars should set product mode and derive paths correctly."""
+        import importlib.util
+        import sys
+        
+        with tempfile.TemporaryDirectory(prefix="core5a-env-") as td:
+            policy_dir = Path(os.path.realpath(td))
+            policy_dir.chmod(0o700)
+            send_gate = policy_dir / "send_gate.py"
+            send_gate.write_text("SEND_NONCE_TTL = 60\nclass SendGateError(Exception): pass\n"
+                               "def mint_send_nonce(to, text, service): return 'nonce'\n"
+                               "def consume_send_nonce(nonce, to, text, service): pass\n"
+                               "def reap_expired_nonces(): pass\n", encoding="utf-8")
+            send_gate.chmod(0o600)
+            confirm_helper = policy_dir / "grokbot-imessage-confirm"
+            confirm_helper.write_text("#!/bin/sh\n", encoding="utf-8")
+            confirm_helper.chmod(0o700)
+            
+            test_env = {
+                **os.environ,
+                "IMESSAGE_POLICY_DIR": str(policy_dir),
+                "IMESSAGE_SEND_GATE_PATH": str(send_gate),
+                "IMESSAGE_CONFIRM_HELPER_PATH": str(confirm_helper),
+                "IMESSAGE_PRODUCT_ID": "grokbot-imessage",
+                "IMESSAGE_BRIDGE_DIR": td,
+            }
+            
+            # Load helper under a fresh module name
+            helper_path = REPO_ROOT / "bin" / "helper.py"
+            module_name = f"helper_test_{id(self)}"
+            spec = importlib.util.spec_from_file_location(module_name, helper_path)
+            test_helper = importlib.util.module_from_spec(spec)
+            
+            # Execute with test environment
+            old_environ = os.environ.copy()
+            try:
+                os.environ.clear()
+                os.environ.update(test_env)
+                sys.modules[module_name] = test_helper
+                spec.loader.exec_module(test_helper)
+                
+                # Verify product mode and paths
+                self.assertEqual(test_helper.WRAPPER_MODE, "product")
+                self.assertEqual(test_helper.PRODUCT_ID, "grokbot-imessage")
+                self.assertEqual(
+                    os.path.realpath(str(test_helper.POLICY_ROOT)),
+                    os.path.realpath(str(policy_dir))
+                )
+                self.assertEqual(
+                    os.path.realpath(str(test_helper.SEND_GATE_PATH)),
+                    os.path.realpath(str(send_gate))
+                )
+                self.assertEqual(
+                    os.path.realpath(str(test_helper.CONFIRM_HELPER_PATH)),
+                    os.path.realpath(str(confirm_helper))
+                )
+            finally:
+                os.environ.clear()
+                os.environ.update(old_environ)
+                if module_name in sys.modules:
+                    del sys.modules[module_name]
+
+
 if __name__ == "__main__":
     unittest.main()
