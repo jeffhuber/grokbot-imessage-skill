@@ -112,7 +112,41 @@ _PRODUCT_ENV_VARS = (
 WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
 HELPER_VERSION = "1.2.2"
-PROTOCOL_VERSION = "1.1"
+PROTOCOL_VERSION = "1.2"
+
+# Bridge role. The DIY install and every host bridge run as "host". A
+# management bridge (product mode, IMESSAGE_BRIDGE_ROLE=manager) is the only
+# place `list_chats` is served, and it never serves body-returning actions.
+# The table below is enforced in the worker; hiding an action in a host or
+# app layer is not sufficient. Unknown role values fail closed.
+_BRIDGE_ROLE_ENV = "IMESSAGE_BRIDGE_ROLE"
+DEFAULT_BRIDGE_ROLE = "host"
+_HOST_ACTIONS = (
+    "status",
+    "review",
+    "search",
+    "chat_history",
+    "response_stats",
+    "contacts_lookup",
+    "send_preview",
+    "send",
+)
+_MANAGER_ACTIONS = ("status", "contacts_lookup", "list_chats")
+ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "host": _HOST_ACTIONS,
+    "manager": _MANAGER_ACTIONS,
+}
+
+
+def bridge_role() -> str:
+    """Return the configured bridge role (unvalidated; see allowed_actions)."""
+    value = os.environ.get(_BRIDGE_ROLE_ENV, "")
+    return value.strip().lower() or DEFAULT_BRIDGE_ROLE
+
+
+def allowed_actions(role: str | None = None) -> tuple[str, ...]:
+    """Actions the worker will serve for `role`. Unknown roles get none."""
+    return ROLE_ACTIONS.get(role if role is not None else bridge_role(), ())
 
 # ---------------------------------------------------------------------------
 # Sibling module loading
@@ -163,6 +197,14 @@ MAX_DAYS = 90
 MAX_HOURS = 24 * 30
 MAX_LIMIT = 500
 MAX_SEARCH_LEN = 200
+# list_chats has its own window: it returns no bodies, only which threads
+# exist, so a multi-year window is safe and useful for policy discovery.
+MAX_LIST_CHATS_DAYS = 3650
+LIST_CHATS_DEFAULT_DAYS = 365
+LIST_CHATS_DEFAULT_LIMIT = 200
+LIST_CHATS_FILTER_SCAN_LIMIT = 500
+MAX_LIST_CHATS_QUERY_LEN = 100
+MAX_LIST_CHATS_PARTICIPANTS = 10
 MAX_TEXT_SNIPPET = 600
 MAX_CONTEXT_MESSAGES = 8
 MAX_REQUEST_BYTES = 64 * 1024
@@ -596,25 +638,46 @@ def lookup_name(chat_id: str, sender: str, contacts: dict[str, str]) -> str:
     return ""
 
 
-def load_chat_participants(conn: sqlite3.Connection) -> dict[str, list[str]]:
-    """Return {chat_identifier: [participant_handle, ...]} for every chat.
+def load_chat_participants(
+    conn: sqlite3.Connection, chat_rowids: Iterable[int] | None = None
+) -> dict[Any, list[str]]:
+    """Return participant handles keyed by chat identifier or row ID.
 
     Used to build a human label for group chats whose chat_identifier is
     just "chatNNNNN…" and whose display_name is empty. With participants
     in hand we can render e.g. "Alice, Bob & 2 others" instead of the
-    opaque group id.
+    opaque group id. `chat_rowids` restricts the scan to candidate chats
+    (bounded callers such as list_chats) and returns a ROWID-keyed map so
+    duplicate chat_identifier rows cannot cross-contaminate participants.
+    None keeps today's full scan and identifier-keyed map for review.
     """
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT c.chat_identifier, h.id
+    sql = """
+        SELECT c.ROWID, c.chat_identifier, h.id
         FROM chat c
         JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
         JOIN handle h ON h.ROWID = chj.handle_id
         """
-    )
+    if chat_rowids is None:
+        cur.execute(sql)
+    else:
+        ids = sorted({int(r) for r in chat_rowids})
+        if not ids:
+            return defaultdict(list)
+        # SQLite's default variable limit is 999; chunk to stay under it.
+        rows: list = []
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            cur.execute(sql + " WHERE c.ROWID IN (%s)" % ",".join("?" * len(chunk)), chunk)
+            rows.extend(cur.fetchall())
+        out: dict[str, list[str]] = defaultdict(list)
+        for chat_rowid, _chat_ident, handle_id in rows:
+            hi = handle_id.decode("utf-8", "ignore") if isinstance(handle_id, bytes) else (handle_id or "")
+            if chat_rowid is not None and hi:
+                out[int(chat_rowid)].append(hi)
+        return out
     out: dict[str, list[str]] = defaultdict(list)
-    for chat_ident, handle_id in cur.fetchall():
+    for _chat_rowid, chat_ident, handle_id in cur.fetchall():
         ci = chat_ident.decode("utf-8", "ignore") if isinstance(chat_ident, bytes) else (chat_ident or "")
         hi = handle_id.decode("utf-8", "ignore") if isinstance(handle_id, bytes) else (handle_id or "")
         if ci and hi:
@@ -904,6 +967,48 @@ def validate_search(v: Any) -> str:
         raise ValueError("search term required")
     if len(v) > MAX_SEARCH_LEN:
         raise ValueError("search term too long")
+    return v
+
+
+def validate_list_chats_days(v: Any) -> float:
+    n = _as_number(v, "days")
+    if n <= 0 or n > MAX_LIST_CHATS_DAYS:
+        raise ValueError(f"days must be in (0, {MAX_LIST_CHATS_DAYS}]")
+    return n
+
+
+def validate_list_chats_limit(v: Any) -> int:
+    """`limit` is an integer in the protocol; reject fractional values."""
+    if isinstance(v, bool):
+        raise ValueError("limit must be an integer")
+    if isinstance(v, float):
+        if not v.is_integer():
+            raise ValueError("limit must be an integer")
+        v = int(v)
+    if isinstance(v, str):
+        try:
+            v = int(v.strip())
+        except ValueError:
+            raise ValueError("limit must be an integer")
+    return validate_limit(v)
+
+
+def validate_list_chats_query(v: Any) -> str | None:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("query must be a string")
+    if len(v) > MAX_LIST_CHATS_QUERY_LEN:
+        raise ValueError("query too long")
+    q = v.strip()
+    return q or None
+
+
+def validate_bool(v: Any, name: str, default: bool) -> bool:
+    if v is None:
+        return default
+    if not isinstance(v, bool):
+        raise ValueError(f"{name} must be a boolean")
     return v
 
 
@@ -1425,12 +1530,141 @@ def action_contacts_lookup(params, conn, contacts, privacy_policy):
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
 
 
+# chat.style in chat.db is IMChatStyle: 43 (ASCII '+') = group chat,
+# 45 (ASCII '-') = one-to-one "instant message" chat. Same mapping as
+# ENGINEERING_PLAN §2.4 and the review classifier's chat-id heuristic.
+_CHAT_STYLE_GROUP = 43
+_CHAT_STYLE_DIRECT = 45
+
+
+def _chat_kind(chat_id: str, style: Any) -> str:
+    if style == _CHAT_STYLE_GROUP:
+        return "group"
+    if style == _CHAT_STYLE_DIRECT:
+        return "direct"
+    # Fallback heuristic, same rule classify_chats uses.
+    is_group = chat_id.startswith("chat") and not re.fullmatch(r"[+0-9@.]+", chat_id)
+    return "group" if is_group else "direct"
+
+
+def _decode_db_text(v: Any) -> str:
+    if isinstance(v, bytes):
+        return v.decode("utf-8", "ignore")
+    return v or ""
+
+
+def action_list_chats(params, conn, contacts, privacy_policy):
+    """Enumerate threads with recent activity, without any message content.
+
+    Management-bridge only (see ROLE_ACTIONS). Intended for policy discovery:
+    the app shows this list so the user can build an allowlist/blocklist. The
+    query deliberately never selects `message.text` or `message.attributedBody`
+    and the read policy is not applied — the point is to see which threads
+    exist so a policy can be written about them.
+    """
+    days = validate_list_chats_days(params.get("days", LIST_CHATS_DEFAULT_DAYS))
+    limit = validate_list_chats_limit(params.get("limit", LIST_CHATS_DEFAULT_LIMIT))
+    include_groups = validate_bool(params.get("include_groups"), "include_groups", True)
+    query = validate_list_chats_query(params.get("query"))
+    cutoff_ns = to_apple_ns(time.time() - days * 86400)
+
+    cur = conn.cursor()
+    sql = """
+        SELECT c.ROWID,
+               c.chat_identifier,
+               COALESCE(c.display_name, ''),
+               COALESCE(c.service_name, ''),
+               c.style,
+               COUNT(m.ROWID),
+               MAX(m.date)
+        FROM chat c
+        JOIN chat_message_join cmj ON cmj.chat_id = c.ROWID
+        JOIN message m ON m.ROWID = cmj.message_id
+        WHERE m.date > ?
+        GROUP BY c.ROWID
+        ORDER BY MAX(m.date) DESC
+        """
+    post_filtering = query is not None or not include_groups
+    candidate_limit = limit if not post_filtering else max(limit + 1, LIST_CHATS_FILTER_SCAN_LIMIT)
+    if not post_filtering:
+        # No post-filtering: let SQLite stop after limit+1 rows so we can
+        # report truncation without pulling every chat.
+        cur.execute(sql + " LIMIT ?", (cutoff_ns, limit + 1))
+    else:
+        # Query/group filters happen after participant labels are assembled.
+        # Bound the candidate scan anyway so filtered requests cannot walk a
+        # whole large chat database before returning no matches.
+        cur.execute(sql + " LIMIT ?", (cutoff_ns, candidate_limit + 1))
+    rows = cur.fetchall()
+    candidate_truncated = len(rows) > candidate_limit
+    rows = rows[:candidate_limit]
+
+    # Participants only for the candidate chats (bounded by LIMIT above), not
+    # a full chat_handle_join scan.
+    participants_by_chat = load_chat_participants(conn, (row[0] for row in rows))
+    ql = query.lower() if query else None
+    items: list[dict] = []
+    for row in rows:
+        chat_rowid = int(row[0])
+        chat_id = _decode_db_text(row[1])
+        display = _decode_db_text(row[2])
+        service = _decode_db_text(row[3])
+        style = row[4]
+        message_count = int(row[5] or 0)
+        last_ns = row[6]
+        if not chat_id:
+            continue
+        kind = _chat_kind(chat_id, style)
+        if kind == "group" and not include_groups:
+            continue
+        participants = list(participants_by_chat.get(chat_rowid, []))
+        if kind == "direct" and not participants:
+            participants = [chat_id]
+        if kind == "group":
+            label = display or group_label(participants, contacts) or chat_id
+        else:
+            label = lookup_name(chat_id, chat_id, contacts) or display or chat_id
+        if ql is not None:
+            haystack = [label.lower(), display.lower(), chat_id.lower()]
+            haystack.extend(p.lower() for p in participants)
+            if not any(ql in h for h in haystack):
+                continue
+        items.append(
+            {
+                "chat_id": chat_id,
+                "kind": kind,
+                "display_name": display,
+                "label": label,
+                "participants": participants[:MAX_LIST_CHATS_PARTICIPANTS],
+                "participant_count": len(participants),
+                "service": service,
+                "message_count": message_count,
+                "last_activity_date": (
+                    from_apple_ns(last_ns).date().isoformat() if last_ns is not None else None
+                ),
+            }
+        )
+        if len(items) > limit:
+            break
+
+    truncated = len(items) > limit or candidate_truncated
+    items = items[:limit]
+    return {
+        "window_days": days,
+        "chat_count": len(items),
+        "truncated": truncated,
+        "chats": items,
+    }
+
+
 def action_status(params, conn, contacts, privacy_policy):
     """Return compatibility and local-install status without reading messages."""
     policy = _coerce_policy(privacy_policy)
     return {
         "helper_version": HELPER_VERSION,
         "protocol_version": PROTOCOL_VERSION,
+        "bridge_role": bridge_role(),
+        "allowed_actions": sorted(allowed_actions()),
         "product_id": PRODUCT_ID,
         "wrapper_mode": WRAPPER_MODE,
         "host_display_name": HOST_DISPLAY_NAME,
@@ -1615,6 +1849,7 @@ ACTIONS = {
     "chat_history": action_chat_history,
     "response_stats": action_response_stats,
     "contacts_lookup": action_contacts_lookup,
+    "list_chats": action_list_chats,
     "send_preview": action_send_preview,
     "send": action_send,
 }
@@ -1706,7 +1941,8 @@ def _read_request_text(req_path: Path, requests_fd: int | None) -> str:
 
 
 def _bad_request(req_stem: str, error: str, *, req_id: str | None = None) -> None:
-    response: dict[str, Any] = {"ok": False, "error": error}
+    response: dict[str, Any] = {"ok": False, "error": error,
+                                "allowed_actions": sorted(allowed_actions())}
     if req_id is not None:
         response["id"] = req_id
     write_response(req_stem, response)
@@ -1765,12 +2001,25 @@ def process_request(
         _bad_request(req_stem, "bad request: params must be an object", req_id=req_id)
         return
 
+    permitted = allowed_actions()
     if action not in ACTIONS:
         write_response(req_stem, {
             "id": req_id,
             "ok": False,
             "error": f"unknown action: {action!r}",
-            "allowed_actions": sorted(ACTIONS.keys()),
+            "allowed_actions": sorted(permitted),
+        })
+        return
+    if action not in permitted:
+        # Role gate: enforced here in the worker, never only in a host or
+        # app layer. A manager bridge never serves bodies; a host bridge
+        # never enumerates chats.
+        write_response(req_stem, {
+            "id": req_id,
+            "ok": False,
+            "error": "action not permitted on this bridge",
+            "bridge_role": bridge_role(),
+            "allowed_actions": sorted(permitted),
         })
         return
 
@@ -1797,6 +2046,7 @@ def process_request(
         log(traceback.format_exc())
         write_response(req_stem, {
             "id": req_id, "action": action, "ok": False, "error": str(e),
+            "allowed_actions": sorted(permitted),
         })
     finally:
         if db_path is not None:

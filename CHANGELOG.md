@@ -6,6 +6,15 @@ version reported by the `status` action.
 
 ## Unreleased
 
+- Bridge protocol 1.2: add the `list_chats` action, which enumerates threads
+  with recent activity for policy discovery and never selects message bodies
+  (a sentinel-body fixture asserts this); add worker-enforced bridge roles
+  (`IMESSAGE_BRIDGE_ROLE`, default `host`) — `list_chats` is served only on a
+  `manager` bridge, body-returning and send actions only on a `host` bridge,
+  and unknown roles serve nothing; `status` reports `bridge_role` and
+  `allowed_actions`. DIY installs are unaffected: nothing sets the role, so
+  every existing action behaves as before.
+
 ## 1.2.2 - 2026-08-14
 
 - Harden hardened-install Python selection by validating interpreter ownership
