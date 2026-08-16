@@ -30,7 +30,9 @@
 
 #ifdef IMESSAGE_PRODUCT_BUILD
 #ifdef __APPLE__
+#include <CoreFoundation/CoreFoundation.h>
 #include <mach-o/dyld.h>
+#include <Security/Security.h>
 #else
 extern int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
 #endif
@@ -94,6 +96,34 @@ extern int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
 
 #ifndef PYTHON_RELPATH
 #error "PYTHON_RELPATH must be defined for product build"
+#endif
+
+#ifndef IMESSAGE_BUNDLE_ID
+#error "IMESSAGE_BUNDLE_ID must be defined for product build"
+#endif
+
+#ifndef IMESSAGE_CONFIRM_BUNDLE_ID
+#error "IMESSAGE_CONFIRM_BUNDLE_ID must be defined for product build"
+#endif
+
+#ifndef IMESSAGE_PYTHON_BUNDLE_ID
+#error "IMESSAGE_PYTHON_BUNDLE_ID must be defined for product build"
+#endif
+
+#ifndef IMESSAGE_TEAM_ID
+#error "IMESSAGE_TEAM_ID must be defined for product build"
+#endif
+
+#ifndef IMESSAGE_BUNDLE_REQUIREMENT
+#define IMESSAGE_BUNDLE_REQUIREMENT ""
+#endif
+
+#ifndef IMESSAGE_CONFIRM_REQUIREMENT
+#define IMESSAGE_CONFIRM_REQUIREMENT ""
+#endif
+
+#ifndef IMESSAGE_PYTHON_REQUIREMENT
+#define IMESSAGE_PYTHON_REQUIREMENT ""
 #endif
 #endif
 
@@ -188,6 +218,124 @@ static int validate_ownership(const char *path, const char *label, uid_t current
     }
     return 0;
 }
+
+#ifdef __APPLE__
+static void print_cf_error(const char *label, OSStatus status, CFErrorRef error) {
+    fprintf(stderr, "%s: %s code signature validation failed (%d)",
+            HELPER_DISPLAY_NAME, label, (int)status);
+    if (error) {
+        CFStringRef description = CFErrorCopyDescription(error);
+        if (description) {
+            char buffer[1024];
+            if (CFStringGetCString(description, buffer, sizeof(buffer),
+                                   kCFStringEncodingUTF8)) {
+                fprintf(stderr, ": %s", buffer);
+            }
+            CFRelease(description);
+        }
+    }
+    fputc('\n', stderr);
+}
+
+static CFStringRef create_requirement_string(const char *identifier,
+                                             const char *override_requirement) {
+    char requirement[1024];
+    const char *source = override_requirement;
+    if (!source || source[0] == '\0') {
+        int written = snprintf(requirement, sizeof(requirement),
+                               "anchor apple generic and identifier \"%s\" "
+                               "and certificate leaf[subject.OU] = \"%s\"",
+                               identifier, IMESSAGE_TEAM_ID);
+        if (written < 0 || (size_t)written >= sizeof(requirement)) {
+            fprintf(stderr, "%s: code requirement is too long\n",
+                    HELPER_DISPLAY_NAME);
+            return NULL;
+        }
+        source = requirement;
+    }
+    return CFStringCreateWithCString(NULL, source, kCFStringEncodingUTF8);
+}
+
+static int validate_code_requirement(const char *path, const char *label,
+                                     const char *identifier,
+                                     const char *override_requirement,
+                                     bool is_directory, bool check_nested) {
+    CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+        NULL, (const UInt8 *)path, strlen(path), is_directory);
+    if (!url) {
+        fprintf(stderr, "%s: cannot create code URL for %s\n",
+                HELPER_DISPLAY_NAME, label);
+        return 10;
+    }
+
+    SecStaticCodeRef code = NULL;
+    OSStatus status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
+    CFRelease(url);
+    if (status != errSecSuccess || !code) {
+        print_cf_error(label, status, NULL);
+        return 10;
+    }
+
+    CFStringRef requirement_string =
+        create_requirement_string(identifier, override_requirement);
+    if (!requirement_string) {
+        CFRelease(code);
+        return 10;
+    }
+
+    SecRequirementRef requirement = NULL;
+    status = SecRequirementCreateWithString(requirement_string,
+                                            kSecCSDefaultFlags, &requirement);
+    CFRelease(requirement_string);
+    if (status != errSecSuccess || !requirement) {
+        print_cf_error(label, status, NULL);
+        CFRelease(code);
+        return 10;
+    }
+
+    SecCSFlags flags =
+        kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSNoNetworkAccess;
+#ifdef IMESSAGE_CHECK_NESTED_CODE
+    if (check_nested) {
+        flags |= kSecCSCheckNestedCode;
+    }
+#else
+    (void)check_nested;
+#endif
+
+    CFErrorRef error = NULL;
+    status = SecStaticCodeCheckValidityWithErrors(code, flags, requirement, &error);
+    if (status != errSecSuccess) {
+        print_cf_error(label, status, error);
+        if (error) {
+            CFRelease(error);
+        }
+        CFRelease(requirement);
+        CFRelease(code);
+        return 10;
+    }
+
+    if (error) {
+        CFRelease(error);
+    }
+    CFRelease(requirement);
+    CFRelease(code);
+    return 0;
+}
+#else
+static int validate_code_requirement(const char *path, const char *label,
+                                     const char *identifier,
+                                     const char *override_requirement,
+                                     bool is_directory, bool check_nested) {
+    (void)path;
+    (void)label;
+    (void)identifier;
+    (void)override_requirement;
+    (void)is_directory;
+    (void)check_nested;
+    return 0;
+}
+#endif
 
 static int set_env_value(char *buffer, size_t size, const char *name,
                          const char *value) {
@@ -492,6 +640,20 @@ int main(int argc, char **argv) {
     if (ret != 0) return ret;
 
     ret = validate_ownership(python_interp, "Python interpreter", current_uid, bundle_owner, true, true);
+    if (ret != 0) return ret;
+
+    ret = validate_code_requirement(bundle_path, "app bundle", IMESSAGE_BUNDLE_ID,
+                                    IMESSAGE_BUNDLE_REQUIREMENT, true, true);
+    if (ret != 0) return ret;
+
+    ret = validate_code_requirement(confirm_helper, "confirm helper",
+                                    IMESSAGE_CONFIRM_BUNDLE_ID,
+                                    IMESSAGE_CONFIRM_REQUIREMENT, false, false);
+    if (ret != 0) return ret;
+
+    ret = validate_code_requirement(python_interp, "Python interpreter",
+                                    IMESSAGE_PYTHON_BUNDLE_ID,
+                                    IMESSAGE_PYTHON_REQUIREMENT, false, false);
     if (ret != 0) return ret;
 
     if (validate_only) {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test script for CORE-2 and CORE-3: dual-mode wrapper build, product allowlist, and path derivation
+# Test script for CORE-2, CORE-3, and CORE-4: product wrapper validation
 # CORE-2 acceptance: Baked-mode behavior byte-identical; product mode runs the
 # bundled interpreter with -I -B and rejects `--product /tmp/x`, `Claude`, and
 # extra args with exit 8 and no exec.
@@ -15,6 +15,7 @@ fi
 
 TEMP_DIR=""
 TEST_HELPER=""
+BAKED_HELPER=""
 
 cleanup() {
   if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
@@ -23,15 +24,40 @@ cleanup() {
   if [ -n "$TEST_HELPER" ] && [ -f "$TEST_HELPER" ]; then
     rm -f "$TEST_HELPER"
   fi
+  if [ -n "$BAKED_HELPER" ] && [ -f "$BAKED_HELPER" ]; then
+    rm -f "$BAKED_HELPER"
+  fi
 }
 
 trap cleanup EXIT
 
-echo "=== CORE-2 + CORE-3 Test Suite ==="
+echo "=== CORE-2 + CORE-3 + CORE-4 Test Suite ==="
 if [ "$IS_MACOS" = false ]; then
   echo "Running on Linux - syntax checks only"
 fi
 echo
+
+PRODUCT_DEFINES=(
+  -DIMESSAGE_PRODUCT_BUILD=1
+  -DAPP_SUPPORT_DIRNAME='"TestBridgePro"'
+  -DPYTHON_RELPATH='"Versions/A/Python"'
+  -DIMESSAGE_BUNDLE_ID='"com.test.bridgepro"'
+  -DIMESSAGE_CONFIRM_BUNDLE_ID='"com.test.bridgepro.confirm"'
+  -DIMESSAGE_PYTHON_BUNDLE_ID='"org.python.python"'
+  -DIMESSAGE_TEAM_ID='"TESTTEAMID"'
+  -DHELPER_DISPLAY_NAME='"test-helper"'
+)
+
+PRODUCT_TEST_REQUIREMENT_DEFINES=(
+  '-DIMESSAGE_BUNDLE_REQUIREMENT="identifier \"com.test.bridgepro\""'
+  '-DIMESSAGE_CONFIRM_REQUIREMENT="identifier \"com.test.bridgepro.confirm\""'
+  '-DIMESSAGE_PYTHON_REQUIREMENT="identifier \"org.python.python\""'
+)
+
+PRODUCT_LINK_FLAGS=()
+if [ "$IS_MACOS" = true ]; then
+  PRODUCT_LINK_FLAGS=(-framework Security -framework CoreFoundation)
+fi
 
 # Test 1: Baked mode compilation (existing behavior)
 echo "Test 1: Baked mode compilation"
@@ -43,6 +69,21 @@ clang -Wall -Wextra -Werror -O2 \
   -DHELPER_DISPLAY_NAME='"test-helper"' \
   -fsyntax-only bin/imessage_helper.c
 echo "✓ Baked mode compiles successfully"
+if [ "$IS_MACOS" = true ]; then
+  BAKED_HELPER=$(mktemp)
+  clang -Wall -Wextra -Werror -O2 \
+    -DHELPER_SCRIPT='"/tmp/helper.py"' \
+    -DSEND_GATE_SCRIPT='"/tmp/send_gate.py"' \
+    -DCONFIRM_HELPER='"/tmp/confirm"' \
+    -DBRIDGE_ROOT='"/tmp/bridge"' \
+    -DHELPER_DISPLAY_NAME='"test-helper"' \
+    -o "$BAKED_HELPER" bin/imessage_helper.c
+  if otool -L "$BAKED_HELPER" | grep -q "Security.framework"; then
+    echo "✗ FAIL: Baked/DIY build must not link Security.framework"
+    exit 1
+  fi
+  echo "✓ Baked/DIY build has no Security.framework dependency"
+fi
 echo
 
 # Test 2: Product mode compilation (syntax check only, no macros)
@@ -62,36 +103,16 @@ echo "Test 3: Product mode compilation with macros"
 if [ "$IS_MACOS" = true ]; then
   TEST_HELPER=$(mktemp)
   clang -Wall -Wextra -Werror -O2 \
-    -DIMESSAGE_PRODUCT_BUILD=1 \
-    -DAPP_SUPPORT_DIRNAME='"TestBridgePro"' \
-    -DPYTHON_RELPATH='"Resources/Python.app/Contents/MacOS/Python"' \
-    -DHELPER_DISPLAY_NAME='"test-helper"' \
-    -o "$TEST_HELPER" bin/imessage_helper.c
+    "${PRODUCT_DEFINES[@]}" \
+    -o "$TEST_HELPER" bin/imessage_helper.c \
+    "${PRODUCT_LINK_FLAGS[@]}"
   echo "✓ Product mode compiles with required macros"
 else
   clang -Wall -Wextra -Werror -O2 \
-    -DIMESSAGE_PRODUCT_BUILD=1 \
-    -DAPP_SUPPORT_DIRNAME='"TestBridgePro"' \
-    -DPYTHON_RELPATH='"Resources/Python.app/Contents/MacOS/Python"' \
-    -DHELPER_DISPLAY_NAME='"test-helper"' \
+    "${PRODUCT_DEFINES[@]}" \
     -fsyntax-only bin/imessage_helper.c
   echo "✓ Product mode compiles with required macros (syntax check)"
 fi
-echo
-
-# Test 4: Mutual exclusivity (should fail to compile)
-echo "Test 4: Mutual exclusivity check"
-if clang -Wall -Wextra -Werror -O2 \
-  -DIMESSAGE_PRODUCT_BUILD=1 \
-  -DHELPER_SCRIPT='"/tmp/helper.py"' \
-  -DSEND_GATE_SCRIPT='"/tmp/send_gate.py"' \
-  -DCONFIRM_HELPER='"/tmp/confirm"' \
-  -DBRIDGE_ROOT='"/tmp/bridge"' \
-  -fsyntax-only bin/imessage_helper.c 2>/dev/null; then
-  echo "✗ FAIL: Product build should reject baked path macros"
-  exit 1
-fi
-echo "✓ Product build correctly rejects baked path macros"
 echo
 
 # Test 4: Mutual exclusivity (should fail to compile)
@@ -221,7 +242,7 @@ echo
 
 if [ "$IS_MACOS" = false ]; then
   echo "Skipping bundle tests on Linux (macOS-only)"
-  echo "=== All CORE-2 + CORE-3 tests passed (syntax checks) ==="
+  echo "=== All CORE-2 + CORE-3 + CORE-4 tests passed (syntax checks) ==="
   exit 0
 fi
 
@@ -231,36 +252,73 @@ TEMP_DIR=$(mktemp -d)
 
 # Create fake bundle structure
 BUNDLE_PATH="$TEMP_DIR/TestApp.app"
+mkdir -p "$BUNDLE_PATH/Contents/MacOS"
 mkdir -p "$BUNDLE_PATH/Contents/Helpers"
 mkdir -p "$BUNDLE_PATH/Contents/Resources/core/bin"
-mkdir -p "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS"
+mkdir -p "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Resources"
 
 # Create Info.plist
 echo '<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleExecutable</key>
+    <string>TestApp</string>
     <key>CFBundleIdentifier</key>
-    <string>com.test.app</string>
+    <string>com.test.bridgepro</string>
 </dict>
 </plist>' > "$BUNDLE_PATH/Contents/Info.plist"
 
 # Create dummy files
+cat > "$TEMP_DIR/test_app.c" <<'C'
+int main(void) { return 0; }
+C
+clang -Wall -Wextra -Werror -O2 -o "$BUNDLE_PATH/Contents/MacOS/TestApp" "$TEMP_DIR/test_app.c"
+
 touch "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
 touch "$BUNDLE_PATH/Contents/Resources/core/bin/send_gate.py"
-touch "$BUNDLE_PATH/Contents/Helpers/imessage-confirm"
-touch "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
-chmod 700 "$BUNDLE_PATH/Contents/Helpers/imessage-confirm"
-chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
+cat > "$TEMP_DIR/python.c" <<'C'
+int main(void) { return 0; }
+C
+clang -Wall -Wextra -Werror -O2 -o "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python" "$TEMP_DIR/python.c"
+cat > "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Resources/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>Python</string>
+    <key>CFBundleIdentifier</key>
+    <string>org.python.python</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+</dict>
+</plist>
+PLIST
+chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
+(cd "$BUNDLE_PATH/Contents/Frameworks/Python.framework" && \
+  ln -s A Versions/Current && \
+  ln -s Versions/Current/Python Python && \
+  ln -s Versions/Current/Resources Resources)
+codesign --force --sign - --identifier org.python.python \
+  "$BUNDLE_PATH/Contents/Frameworks/Python.framework" >/dev/null
+
+cat > "$TEMP_DIR/confirm.c" <<'C'
+int main(void) { return 0; }
+C
+clang -Wall -Wextra -Werror -O2 -o "$BUNDLE_PATH/Contents/Helpers/imessage-confirm" "$TEMP_DIR/confirm.c"
+codesign --force --sign - --identifier com.test.bridgepro.confirm \
+  "$BUNDLE_PATH/Contents/Helpers/imessage-confirm" >/dev/null
 
 # Compile product-mode helper into the bundle
 clang -Wall -Wextra -Werror -O2 \
-  -DIMESSAGE_PRODUCT_BUILD=1 \
-  -DAPP_SUPPORT_DIRNAME='"TestBridgePro"' \
-  -DPYTHON_RELPATH='"Resources/Python.app/Contents/MacOS/Python"' \
-  -DHELPER_DISPLAY_NAME='"test-helper"' \
+  "${PRODUCT_DEFINES[@]}" \
+  "${PRODUCT_TEST_REQUIREMENT_DEFINES[@]}" \
   -o "$BUNDLE_PATH/Contents/Helpers/test-helper" \
-  bin/imessage_helper.c
+  bin/imessage_helper.c \
+  "${PRODUCT_LINK_FLAGS[@]}"
+
+codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
 
 echo "  ✓ Compiled product-mode helper in bundle"
 
@@ -315,7 +373,7 @@ if ! echo "$output" | grep -q "\"helper_py\":\".*TestApp.app/Contents/Resources/
   echo "✗ FAIL: helper_py path not resolved correctly"
   exit 1
 fi
-if ! echo "$output" | grep -q "\"python_interp\":\".*Python.app/Contents/MacOS/Python\""; then
+if ! echo "$output" | grep -q "\"python_interp\":\".*Python.framework/Versions/A/Python\""; then
   echo "✗ FAIL: python_interp path not resolved correctly"
   exit 1
 fi
@@ -324,7 +382,7 @@ echo
 
 # Test 15: Validation rejects non-executable interpreter
 echo "Test 15: Product validate-only rejects non-executable Python"
-chmod 600 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
+chmod 600 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
 exit_code=$?
@@ -333,13 +391,13 @@ if [ $exit_code -ne 6 ]; then
   echo "✗ FAIL: Non-executable Python should exit 6, got $exit_code"
   exit 1
 fi
-chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
+chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 echo "✓ Non-executable Python rejected with exit 6"
 echo
 
 # Test 16: Validation rejects executables the current user cannot run
 echo "Test 16: Product validate-only rejects inaccessible execute bits"
-chmod 001 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
+chmod 001 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
 exit_code=$?
@@ -348,8 +406,59 @@ if [ $exit_code -ne 6 ]; then
   echo "✗ FAIL: Inaccessible execute bit should exit 6, got $exit_code"
   exit 1
 fi
-chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Resources/Python.app/Contents/MacOS/Python"
+chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 echo "✓ Inaccessible execute bit rejected with exit 6"
 echo
 
-echo "=== All CORE-2 + CORE-3 tests passed ==="
+# Test 17: Product validate-only rejects bundle seal tampering
+echo "Test 17: Product validate-only rejects bundle seal tampering"
+echo "# tampered" >> "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
+set +e
+"$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
+exit_code=$?
+set -e
+if [ $exit_code -ne 10 ]; then
+  echo "✗ FAIL: Tampered sealed bundle should exit 10, got $exit_code"
+  exit 1
+fi
+echo "✓ Tampered sealed bundle rejected with exit 10"
+echo
+
+# Re-seal the bundle, then tamper with the separately validated Python leaf.
+printf "" > "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
+codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
+
+echo "Test 18: Product validate-only rejects Python interpreter tampering"
+printf "tamper" >> "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
+set +e
+"$BUNDLE_PATH/Contents/Helpers/test-helper" --product openai --validate-only >/dev/null 2>&1
+exit_code=$?
+set -e
+if [ $exit_code -ne 10 ]; then
+  echo "✗ FAIL: Tampered Python interpreter should exit 10, got $exit_code"
+  exit 1
+fi
+echo "✓ Tampered Python interpreter rejected with exit 10"
+echo
+
+# Restore Python and the bundle, then tamper with imessage-confirm.
+clang -Wall -Wextra -Werror -O2 -o "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python" "$TEMP_DIR/python.c"
+chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
+codesign --force --sign - --identifier org.python.python \
+  "$BUNDLE_PATH/Contents/Frameworks/Python.framework" >/dev/null
+codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
+
+echo "Test 19: Product validate-only rejects confirm helper tampering"
+printf "tamper" >> "$BUNDLE_PATH/Contents/Helpers/imessage-confirm"
+set +e
+"$BUNDLE_PATH/Contents/Helpers/test-helper" --product openai --validate-only >/dev/null 2>&1
+exit_code=$?
+set -e
+if [ $exit_code -ne 10 ]; then
+  echo "✗ FAIL: Tampered confirm helper should exit 10, got $exit_code"
+  exit 1
+fi
+echo "✓ Tampered confirm helper rejected with exit 10"
+echo
+
+echo "=== All CORE-2 + CORE-3 + CORE-4 tests passed ==="
