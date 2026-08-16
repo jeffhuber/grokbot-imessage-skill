@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -145,6 +147,32 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
         self.assertEqual(payload["resolved_name"], "Alice Example")
         self.assertEqual(payload["text"], "all of this text must be visible")
         self.assertNotIn("all of this text", " ".join(call.args[0]))
+
+    def test_confirmation_helper_path_can_come_from_environment(self) -> None:
+        script = """
+import importlib.util
+import sys
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("helper_env_probe", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+print(module.CONFIRM_HELPER_PATH)
+"""
+        expected = Path("/tmp/Bridge Pro.app/Contents/Helpers/imessage-confirm")
+        env = {
+            **os.environ,
+            "IMESSAGE_CONFIRM_HELPER_PATH": str(expected),
+            "IMESSAGE_BRIDGE_DIR": self._tmp.name,
+        }
+        result = subprocess.run(
+            [sys.executable, "-c", script, str(REPO_ROOT / "bin" / "helper.py")],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(result.stdout.strip(), str(expected))
 
     def test_confirmation_helper_fails_closed(self) -> None:
         for returncode, expected in ((1, False), (3, False)):

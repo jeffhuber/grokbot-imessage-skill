@@ -7,21 +7,34 @@
  *
  * Dual-mode build:
  * - Baked mode (default): Compile with -DHELPER_SCRIPT, -DSEND_GATE_SCRIPT,
- *   -DCONFIRM_HELPER, -DBRIDGE_ROOT. Paths are baked at compile time.
+ *   -DCONFIRM_HELPER, -DBRIDGE_ROOT. Paths are baked at compile time and the
+ *   exec arguments stay byte-identical with the pre-product wrapper.
  * - Product mode: Compile with -DIMESSAGE_PRODUCT_BUILD=1. Paths resolved
- *   at runtime via --product <id> CLI. Requires product allowlist match.
+ *   at runtime via --product <id> CLI. Requires product allowlist match and
+ *   runs the bundled interpreter with -I -B.
  */
 
 #include <errno.h>
+#include <libgen.h>
 #include <limits.h>
 #include <pwd.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#ifdef IMESSAGE_PRODUCT_BUILD
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#else
+extern int _NSGetExecutablePath(char *buf, uint32_t *bufsize);
+#endif
+#endif
 
 #ifdef IMESSAGE_PRODUCT_BUILD
     #if defined(HELPER_SCRIPT) || defined(SEND_GATE_SCRIPT) || \
@@ -74,6 +87,16 @@
 #define HOST_DISPLAY_NAME "AI assistant"
 #endif
 
+#ifdef IMESSAGE_PRODUCT_BUILD
+#ifndef APP_SUPPORT_DIRNAME
+#error "APP_SUPPORT_DIRNAME must be defined for product build"
+#endif
+
+#ifndef PYTHON_RELPATH
+#error "PYTHON_RELPATH must be defined for product build"
+#endif
+#endif
+
 extern char **environ;
 
 #ifdef IMESSAGE_PRODUCT_BUILD
@@ -112,6 +135,200 @@ static bool is_path_like(const char *str) {
 
 static void print_usage(const char *display_name) {
     fprintf(stderr, "Usage: %s --product <id> [--validate-only]\n", display_name);
+}
+
+/*
+ * Product validation exit codes:
+ * 2 = required artifact missing, 3 = symlink/non-regular artifact,
+ * 4 = owner mismatch, 5 = group/world writable, 6 = not executable,
+ * 7 = derived path/env too long,
+ * 8 = CLI/allowlist usage error, 9 = bundle/home discovery failure.
+ */
+static int validate_ownership(const char *path, const char *label, uid_t current_uid,
+                               uid_t bundle_owner, bool reject_symlink,
+                               bool require_executable) {
+    struct stat st;
+    if (lstat(path, &st) != 0) {
+        fprintf(stderr, "%s: %s missing at %s (%s)\n", HELPER_DISPLAY_NAME,
+                label, path, strerror(errno));
+        return 2;
+    }
+    if (reject_symlink && S_ISLNK(st.st_mode)) {
+        fprintf(stderr, "%s: %s %s is a symlink; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
+        return 3;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        fprintf(stderr, "%s: %s %s is not a regular file; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
+        return 3;
+    }
+    if (st.st_mode & (S_IWGRP | S_IWOTH)) {
+        fprintf(stderr, "%s: %s %s is group/world writable; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
+        return 5;
+    }
+    (void)current_uid;
+    if (st.st_uid != bundle_owner && st.st_uid != 0) {
+        fprintf(stderr,
+                "%s: %s %s has uid %u, expected 0 or bundle owner %u; refusing\n",
+                HELPER_DISPLAY_NAME, label, path, (unsigned int)st.st_uid,
+                (unsigned int)bundle_owner);
+        return 4;
+    }
+    if (require_executable && !(st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
+        fprintf(stderr, "%s: %s %s is not executable; refusing\n",
+                HELPER_DISPLAY_NAME, label, path);
+        return 6;
+    }
+    if (require_executable && access(path, X_OK) != 0) {
+        fprintf(stderr, "%s: %s %s is not executable by current user; refusing (%s)\n",
+                HELPER_DISPLAY_NAME, label, path, strerror(errno));
+        return 6;
+    }
+    return 0;
+}
+
+static int set_env_value(char *buffer, size_t size, const char *name,
+                         const char *value) {
+    int written = snprintf(buffer, size, "%s=%s", name, value);
+    if (written < 0 || (size_t)written >= size) {
+        fprintf(stderr, "%s: %s value is too long\n", HELPER_DISPLAY_NAME, name);
+        return -1;
+    }
+    return 0;
+}
+
+static int format_path(char *buffer, size_t size, const char *label,
+                       const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(buffer, size, fmt, args);
+    va_end(args);
+    if (written < 0 || (size_t)written >= size) {
+        fprintf(stderr, "%s: %s path is too long\n", HELPER_DISPLAY_NAME, label);
+        return 7;
+    }
+    return 0;
+}
+
+static void print_json_string(const char *value) {
+    putchar('"');
+    for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
+        switch (*p) {
+            case '"':
+                fputs("\\\"", stdout);
+                break;
+            case '\\':
+                fputs("\\\\", stdout);
+                break;
+            case '\b':
+                fputs("\\b", stdout);
+                break;
+            case '\f':
+                fputs("\\f", stdout);
+                break;
+            case '\n':
+                fputs("\\n", stdout);
+                break;
+            case '\r':
+                fputs("\\r", stdout);
+                break;
+            case '\t':
+                fputs("\\t", stdout);
+                break;
+            default:
+                if (*p < 0x20) {
+                    printf("\\u%04x", *p);
+                } else {
+                    putchar(*p);
+                }
+        }
+    }
+    putchar('"');
+}
+
+static void print_json_field(const char *name, const char *value) {
+    print_json_string(name);
+    putchar(':');
+    print_json_string(value);
+}
+
+static int get_bundle_path(char *bundle_path, size_t bundle_path_size) {
+    char exe_path[PATH_MAX];
+    uint32_t size = sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &size) != 0) {
+        fprintf(stderr, "%s: executable path too long\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    char real_path[PATH_MAX];
+    if (realpath(exe_path, real_path) == NULL) {
+        fprintf(stderr, "%s: realpath failed: %s\n", HELPER_DISPLAY_NAME,
+                strerror(errno));
+        return 9;
+    }
+
+    char real_path_copy[PATH_MAX];
+    strncpy(real_path_copy, real_path, sizeof(real_path_copy) - 1);
+    real_path_copy[sizeof(real_path_copy) - 1] = '\0';
+
+    char *base = basename(real_path_copy);
+    size_t base_len = strlen(base);
+    size_t real_len = strlen(real_path);
+    const char *expected_suffix = "/Contents/Helpers/";
+    size_t suffix_len = strlen(expected_suffix);
+
+    if (real_len <= base_len + suffix_len) {
+        fprintf(stderr, "%s: not inside Contents/Helpers/\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    size_t prefix_len = real_len - base_len;
+    if (strncmp(real_path + prefix_len - suffix_len, expected_suffix, suffix_len) != 0) {
+        fprintf(stderr, "%s: not inside Contents/Helpers/\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    char work_path[PATH_MAX];
+    strncpy(work_path, real_path, sizeof(work_path) - 1);
+    work_path[sizeof(work_path) - 1] = '\0';
+
+    char *d1 = dirname(work_path);
+    char temp1[PATH_MAX];
+    strncpy(temp1, d1, sizeof(temp1) - 1);
+    temp1[sizeof(temp1) - 1] = '\0';
+
+    char *d2 = dirname(temp1);
+    char temp2[PATH_MAX];
+    strncpy(temp2, d2, sizeof(temp2) - 1);
+    temp2[sizeof(temp2) - 1] = '\0';
+
+    char *d3 = dirname(temp2);
+
+    if (strlen(d3) + 5 > bundle_path_size) {
+        fprintf(stderr, "%s: bundle path too long\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    int ret = format_path(bundle_path, bundle_path_size, "bundle", "%s", d3);
+    if (ret != 0) {
+        return ret;
+    }
+
+    char info_plist[PATH_MAX];
+    ret = format_path(info_plist, sizeof(info_plist), "Info.plist",
+                      "%s/Contents/Info.plist", bundle_path);
+    if (ret != 0) {
+        return ret;
+    }
+    struct stat st;
+    if (stat(info_plist, &st) != 0) {
+        fprintf(stderr, "%s: Contents/Info.plist missing\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    return 0;
 }
 #else
 static int validate_file(const char *path, const char *label, uid_t owner,
@@ -201,14 +418,197 @@ int main(int argc, char **argv) {
         return 8;
     }
 
+    char bundle_path[PATH_MAX];
+    int ret = get_bundle_path(bundle_path, sizeof(bundle_path));
+    if (ret != 0) {
+        return ret;
+    }
+
+    uid_t current_uid = getuid();
+    struct stat bundle_st;
+    if (stat(bundle_path, &bundle_st) != 0) {
+        fprintf(stderr, "%s: cannot stat bundle: %s\n", HELPER_DISPLAY_NAME,
+                strerror(errno));
+        return 9;
+    }
+    uid_t bundle_owner = bundle_st.st_uid;
+    if (bundle_owner != current_uid && bundle_owner != 0) {
+        fprintf(stderr,
+                "%s: bundle owner %u is neither current user %u nor root; refusing\n",
+                HELPER_DISPLAY_NAME, (unsigned int)bundle_owner,
+                (unsigned int)current_uid);
+        return 4;
+    }
+
+    struct passwd *pw = getpwuid(current_uid);
+    if (!pw || !pw->pw_dir) {
+        fprintf(stderr, "%s: cannot get home directory\n", HELPER_DISPLAY_NAME);
+        return 9;
+    }
+
+    char bridge_root[PATH_MAX];
+    ret = format_path(bridge_root, sizeof(bridge_root), "bridge root",
+                      "%s/Library/Application Support/%s/bridges/%s",
+                      pw->pw_dir, APP_SUPPORT_DIRNAME, entry->product_id);
+    if (ret != 0) return ret;
+
+    char policy_dir[PATH_MAX] = "";
+    bool is_host = strcmp(entry->role, "host") == 0;
+    if (is_host) {
+        ret = format_path(policy_dir, sizeof(policy_dir), "policy dir",
+                          "%s/Library/Application Support/%s/policies/%s",
+                          pw->pw_dir, APP_SUPPORT_DIRNAME, entry->product_id);
+        if (ret != 0) return ret;
+    }
+
+    char helper_py[PATH_MAX];
+    ret = format_path(helper_py, sizeof(helper_py), "helper.py",
+                      "%s/Contents/Resources/core/bin/helper.py", bundle_path);
+    if (ret != 0) return ret;
+
+    char send_gate_py[PATH_MAX];
+    ret = format_path(send_gate_py, sizeof(send_gate_py), "send_gate.py",
+                      "%s/Contents/Resources/core/bin/send_gate.py", bundle_path);
+    if (ret != 0) return ret;
+
+    char confirm_helper[PATH_MAX];
+    ret = format_path(confirm_helper, sizeof(confirm_helper), "confirm helper",
+                      "%s/Contents/Helpers/imessage-confirm", bundle_path);
+    if (ret != 0) return ret;
+
+    char python_interp[PATH_MAX];
+    ret = format_path(python_interp, sizeof(python_interp), "Python interpreter",
+                      "%s/Contents/Frameworks/Python.framework/%s",
+                      bundle_path, PYTHON_RELPATH);
+    if (ret != 0) return ret;
+
+    ret = validate_ownership(helper_py, "helper.py", current_uid, bundle_owner, true, false);
+    if (ret != 0) return ret;
+
+    ret = validate_ownership(send_gate_py, "send_gate.py", current_uid, bundle_owner, true, false);
+    if (ret != 0) return ret;
+
+    ret = validate_ownership(confirm_helper, "confirm helper", current_uid, bundle_owner, true, true);
+    if (ret != 0) return ret;
+
+    ret = validate_ownership(python_interp, "Python interpreter", current_uid, bundle_owner, true, true);
+    if (ret != 0) return ret;
+
     if (validate_only) {
-        printf("{\"product\":\"%s\",\"role\":\"%s\",\"validate_only\":true}\n",
-               entry->product_id, entry->role);
+        putchar('{');
+        print_json_field("product", entry->product_id);
+        putchar(',');
+        print_json_field("role", entry->role);
+        putchar(',');
+        print_json_field("bridge_root", bridge_root);
+        if (is_host) {
+            putchar(',');
+            print_json_field("policy_dir", policy_dir);
+        }
+        putchar(',');
+        print_json_field("helper_py", helper_py);
+        putchar(',');
+        print_json_field("send_gate_py", send_gate_py);
+        putchar(',');
+        print_json_field("confirm_helper", confirm_helper);
+        putchar(',');
+        print_json_field("python_interp", python_interp);
+        puts("}");
         return 0;
     }
 
-    fprintf(stderr, "%s: product mode path derivation not yet implemented\n",
-            HELPER_DISPLAY_NAME);
+    char tmpdir[PATH_MAX];
+#ifdef __APPLE__
+    size_t tmpdir_len = confstr(_CS_DARWIN_USER_TEMP_DIR, tmpdir, sizeof(tmpdir));
+    if (tmpdir_len == 0 || tmpdir_len > sizeof(tmpdir)) {
+        strcpy(tmpdir, "/tmp");
+    } else {
+        size_t len = strlen(tmpdir);
+        if (len > 0 && tmpdir[len - 1] == '/') {
+            tmpdir[len - 1] = '\0';
+        }
+    }
+#else
+    strcpy(tmpdir, "/tmp");
+#endif
+
+    static char env_path[] = "PATH=/usr/bin:/bin";
+    static char env_home[PATH_MAX + 16];
+    static char env_lang[] = "LANG=en_US.UTF-8";
+    static char env_tmpdir[PATH_MAX + 16];
+    static char env_bridge_dir[PATH_MAX + 48];
+    static char env_product_id[128];
+    static char env_role[64];
+    static char env_policy_dir[PATH_MAX + 48];
+    static char env_confirm_path[PATH_MAX + 64];
+    static char env_send_gate_path[PATH_MAX + 64];
+    static char env_host_display[128];
+
+    if (set_env_value(env_home, sizeof(env_home), "HOME", pw->pw_dir) != 0 ||
+        set_env_value(env_tmpdir, sizeof(env_tmpdir), "TMPDIR", tmpdir) != 0 ||
+        set_env_value(env_bridge_dir, sizeof(env_bridge_dir), "IMESSAGE_BRIDGE_DIR",
+                      bridge_root) != 0 ||
+        set_env_value(env_product_id, sizeof(env_product_id), "IMESSAGE_PRODUCT_ID",
+                      entry->product_id) != 0 ||
+        set_env_value(env_role, sizeof(env_role), "IMESSAGE_BRIDGE_ROLE",
+                      entry->role) != 0 ||
+        set_env_value(env_confirm_path, sizeof(env_confirm_path),
+                      "IMESSAGE_CONFIRM_HELPER_PATH", confirm_helper) != 0 ||
+        set_env_value(env_send_gate_path, sizeof(env_send_gate_path),
+                      "IMESSAGE_SEND_GATE_PATH", send_gate_py) != 0 ||
+        set_env_value(env_host_display, sizeof(env_host_display),
+                      "IMESSAGE_HOST_DISPLAY_NAME", entry->host_display_name) != 0) {
+        return 7;
+    }
+
+    if (is_host && set_env_value(env_policy_dir, sizeof(env_policy_dir),
+                                  "IMESSAGE_POLICY_DIR", policy_dir) != 0) {
+        return 7;
+    }
+
+    static char *new_env_host[] = {
+        env_path,
+        env_home,
+        env_lang,
+        env_tmpdir,
+        env_bridge_dir,
+        env_product_id,
+        env_role,
+        env_policy_dir,
+        env_confirm_path,
+        env_send_gate_path,
+        env_host_display,
+        NULL,
+    };
+
+    static char *new_env_manager[] = {
+        env_path,
+        env_home,
+        env_lang,
+        env_tmpdir,
+        env_bridge_dir,
+        env_product_id,
+        env_role,
+        env_confirm_path,
+        env_send_gate_path,
+        env_host_display,
+        NULL,
+    };
+
+    environ = is_host ? new_env_host : new_env_manager;
+
+    char *exec_argv[] = {
+        python_interp,
+        "-I",
+        "-B",
+        helper_py,
+        NULL,
+    };
+
+    execv(python_interp, exec_argv);
+
+    fprintf(stderr, "%s: execv %s failed: %s\n", HELPER_DISPLAY_NAME,
+            python_interp, strerror(errno));
     return 1;
 
 #else
