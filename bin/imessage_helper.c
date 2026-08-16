@@ -168,7 +168,7 @@ int main(int argc, char **argv) {
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--product") == 0) {
-            if (i + 1 >= argc) {
+            if (product_id || i + 1 >= argc) {
                 print_usage(HELPER_DISPLAY_NAME);
                 return 8;
             }
