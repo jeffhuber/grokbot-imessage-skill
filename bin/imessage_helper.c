@@ -90,7 +90,7 @@ static const product_entry product_allowlist[] = {
     {"manager", "Manager", "manager"},
 };
 
-static const size_t product_allowlist_size = 
+static const size_t product_allowlist_size =
     sizeof(product_allowlist) / sizeof(product_allowlist[0]);
 
 static const product_entry *find_product(const char *product_id) {
@@ -106,7 +106,7 @@ static const product_entry *find_product(const char *product_id) {
 }
 
 static bool is_path_like(const char *str) {
-    return str && (strchr(str, '/') != NULL || strcmp(str, ".") == 0 || 
+    return str && (strchr(str, '/') != NULL || strcmp(str, ".") == 0 ||
                    strcmp(str, "..") == 0);
 }
 
