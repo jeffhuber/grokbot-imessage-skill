@@ -349,6 +349,7 @@ class ProductModeTests(unittest.TestCase):
                 status = fresh_helper.action_status({}, None, {}, fresh_helper.load_privacy_policy())
                 self.assertEqual(status["product_id"], "test-custom-product")
                 self.assertEqual(status["wrapper_mode"], "product")
+                self.assertIsNone(status["launchd_label"])
                 self.assertEqual(status["policy_dir"], str(policy_dir))
             finally:
                 sys.modules.pop("test_helper_fresh", None)
