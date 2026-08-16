@@ -7,7 +7,7 @@ description: >
   stats, or send a plain-text iMessage. macOS only—uses an on-device launchd
   helper to query the Messages SQLite database and AppleScript (osascript) to
   send outbound messages.
-version: 1.2.2
+version: 1.3.0
 ---
 
 # iMessage on macOS — Grok Bot
