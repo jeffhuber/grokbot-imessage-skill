@@ -6,6 +6,8 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.3.0 - 2026-08-16
+
 - Bridge protocol 1.2: add the `list_chats` action, which enumerates threads
   with recent activity for policy discovery and never selects message bodies
   (a sentinel-body fixture asserts this); add worker-enforced bridge roles
@@ -14,6 +16,16 @@ version reported by the `status` action.
   and unknown roles serve nothing; `status` reports `bridge_role` and
   `allowed_actions`. DIY installs are unaffected: nothing sets the role, so
   every existing action behaves as before.
+- CORE-5a product-mode hardening: apply the same uid/mode ownership checks to
+  `read_policy.txt` that are already enforced for `send_policy.txt` on wrapper
+  startup, reject reads from host bridges when read policy is unavailable; treat
+  root-owned files as satisfying `require_uid_owner` checks; add defense-in-depth
+  check to `_load_send_gate()` when loading product-mode send-gate state; harden
+  env-plumbing re-import test to use `os.path.realpath()`.
+- CORE-5b role-gating extensions: introduce `send_policy.txt` support for manager
+  bridges, allow manager bridges to operate without nonce files.
+- CORE-8 product-mode send policy: enforce send policy validation in product mode,
+  hide launchd label from product-mode environments, add per-bridge file lock parity.
 
 ## 1.2.2 - 2026-08-14
 

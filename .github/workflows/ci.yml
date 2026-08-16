@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: IMESSAGE_TEST_PYTHON="$(command -v python)" ./tools/test.sh v1.2.2
+      - run: IMESSAGE_TEST_PYTHON="$(command -v python)" ./tools/test.sh v1.3.0
       - run: bash -n install.sh tools/select_python.sh tools/test.sh
       - run: bash -n install-skill.sh
       - run: bash -n install-hardened.sh
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: IMESSAGE_TEST_PYTHON="$(command -v python3)" ./tools/test.sh v1.2.2
+      - run: IMESSAGE_TEST_PYTHON="$(command -v python3)" ./tools/test.sh v1.3.0
       - run: plutil -lint com.jeffhuber.grokbot-imessage.plist.template
       - name: Compile FDA wrapper
         run: >-
