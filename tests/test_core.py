@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 import struct
 import sys
 import tempfile
@@ -181,7 +182,7 @@ class ProductModeTests(unittest.TestCase):
             helper.WRAPPER_MODE = "product"
             helper.POLICY_ROOT = policy_dir
             helper.READ_POLICY_PATH = policy_dir / "read_policy.txt"
-            
+
             policy = helper.load_privacy_policy()
             self.assertEqual(policy.mode, "allowlist")
         finally:
@@ -202,7 +203,7 @@ class ProductModeTests(unittest.TestCase):
             helper.WRAPPER_MODE = "baked"
             helper.POLICY_ROOT = policy_dir
             helper.READ_POLICY_PATH = policy_dir / "read_policy.txt"
-            
+
             policy = helper.load_privacy_policy()
             self.assertEqual(policy.mode, "blocklist")
         finally:
@@ -444,6 +445,166 @@ class SendGateTests(unittest.TestCase):
 
         self.assertEqual(stat.S_IMODE(victim.stat().st_mode), 0o755)
         self.assertEqual(list(victim.iterdir()), [])
+
+
+class RoleGatingTests(unittest.TestCase):
+    """Test IMESSAGE_BRIDGE_ROLE role-based action gating (CORE-5b)."""
+
+    def test_manager_allowed_actions_in_status(self) -> None:
+        """Manager role reports correct allowed_actions in status response."""
+        script = """
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "/tmp/test-bridge"
+os.environ["IMESSAGE_BRIDGE_ROLE"] = "manager"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+result = helper.action_status({}, None, {}, [])
+assert result["bridge_role"] == "manager", f"Expected manager, got {result['bridge_role']}"
+assert "list_chats" in result["allowed_actions"], "list_chats should be in allowed_actions"
+assert "review" not in result["allowed_actions"], "review should not be in allowed_actions"
+print("OK")
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("OK", completed.stdout)
+
+    def test_host_allowed_actions_in_status(self) -> None:
+        """Host role reports correct allowed_actions in status response."""
+        script = """
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "/tmp/test-bridge"
+os.environ["IMESSAGE_BRIDGE_ROLE"] = "host"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+result = helper.action_status({}, None, {}, [])
+assert result["bridge_role"] == "host", f"Expected host, got {result['bridge_role']}"
+assert "review" in result["allowed_actions"], "review should be in allowed_actions"
+assert "send" in result["allowed_actions"], "send should be in allowed_actions"
+assert len(result["allowed_actions"]) == 8, f"Expected 8 actions, got {len(result['allowed_actions'])}"
+print("OK")
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("OK", completed.stdout)
+
+
+class SendPolicyTests(unittest.TestCase):
+    """Test send_policy.json gating (CORE-5b)."""
+
+    def test_send_policy_disabled_blocks_preview(self) -> None:
+        """send_policy.json enabled=false blocks send_preview."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = Path(os.path.realpath(tmpdir))
+            policy_dir = bridge / "policy"
+            policy_dir.mkdir(mode=0o700)
+            policy_file = policy_dir / "send_policy.json"
+            policy_file.write_text(json.dumps({"schema": 1, "enabled": False, "acknowledged_at": None}))
+            policy_file.chmod(0o600)
+
+            script = f"""
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "{bridge}"
+os.environ["IMESSAGE_POLICY_DIR"] = "{policy_dir}"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+try:
+    helper.action_send_preview({{"to": "+14155551234", "text": "hello"}}, None, {{}}, [])
+    print("ERROR: should have raised")
+    sys.exit(1)
+except ValueError as e:
+    if "disabled by policy" in str(e):
+        print("OK")
+    else:
+        print(f"ERROR: wrong error: {{e}}")
+        sys.exit(1)
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("OK", completed.stdout)
+
+    def test_send_policy_enabled_allows_preview(self) -> None:
+        """send_policy.json enabled=true allows send_preview to mint nonce."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = Path(os.path.realpath(tmpdir))
+            policy_dir = bridge / "policy"
+            policy_dir.mkdir(mode=0o700)
+            (bridge / "control" / "requests").mkdir(parents=True, mode=0o700)
+            (bridge / "control" / "responses").mkdir(parents=True, mode=0o700)
+            policy_file = policy_dir / "send_policy.json"
+            policy_file.write_text(json.dumps({"schema": 1, "enabled": True, "acknowledged_at": "2026-01-01"}))
+            policy_file.chmod(0o600)
+
+            script = f"""
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "{bridge}"
+os.environ["IMESSAGE_POLICY_DIR"] = "{policy_dir}"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+result = helper.action_send_preview({{"to": "+14155551234", "text": "hello"}}, None, {{}}, [])
+assert "send_nonce" in result, "send_nonce should be in result"
+print("OK")
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("OK", completed.stdout)
+
+
+class ManagerModeTests(unittest.TestCase):
+    """Test manager mode special cases (CORE-5b)."""
+
+    def test_manager_contacts_lookup_unfiltered(self) -> None:
+        """Manager mode returns all contacts regardless of blocklist."""
+        script = """
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "/tmp/test-bridge"
+os.environ["IMESSAGE_BRIDGE_ROLE"] = "manager"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+contacts = {"1234567890": "Blocked User"}
+policy = helper.PrivacyPolicy(mode="blocklist", blocklist=("1234567890",), allowlist=())
+result = helper.action_contacts_lookup({"name": "Blocked"}, None, contacts, policy)
+assert result["match_count"] == 1, f"Expected 1 match, got {result['match_count']}"
+assert result["matches"][0]["name"] == "Blocked User", "Should see blocked contact"
+print("OK")
+"""
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("OK", completed.stdout)
 
 
 if __name__ == "__main__":

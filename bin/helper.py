@@ -82,6 +82,7 @@ ALLOWLIST_PATH = Path(
     )
 )
 READ_POLICY_PATH = POLICY_ROOT / "read_policy.txt"
+SEND_POLICY_PATH = POLICY_ROOT / "send_policy.json"
 SEND_GATE_PATH = Path(
     os.path.abspath(
         os.path.expanduser(
@@ -752,6 +753,10 @@ def _load_list(path: Path, require_root_owner: bool = False, require_uid_owner: 
 
 
 def load_privacy_policy() -> PrivacyPolicy:
+    # Manager role: no policy files loaded
+    if bridge_role() == "manager":
+        return PrivacyPolicy(mode="blocklist", blocklist=(), allowlist=())
+
     mode_override = os.environ.get("COWORK_IMESSAGE_READ_POLICY", "runtime")
     if mode_override in ("allowlist", "blocklist"):
         mode = mode_override
@@ -806,6 +811,33 @@ def load_privacy_policy() -> PrivacyPolicy:
 def load_blocklist() -> list[str]:
     """Backward-compatible loader retained for existing integrations/tests."""
     return list(_load_list(BLOCKLIST_PATH))
+
+
+def is_send_policy_enabled() -> bool:
+    """Check if send_policy.json enables sending. Product mode only; DIY always returns True."""
+    if "IMESSAGE_POLICY_DIR" not in os.environ:
+        return True
+    try:
+        metadata = SEND_POLICY_PATH.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            log(f"send_policy.json rejected: must be a regular file")
+            return False
+        if metadata.st_uid != os.getuid():
+            log(f"send_policy.json rejected: must be owned by current user (uid {os.getuid()})")
+            return False
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            log(f"send_policy.json rejected: must not be group/world-writable")
+            return False
+        policy = json.loads(SEND_POLICY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(policy, dict):
+            log(f"send_policy.json malformed: root must be an object")
+            return False
+        return policy.get("enabled") is True
+    except FileNotFoundError:
+        return False
+    except (json.JSONDecodeError, OSError) as e:
+        log(f"send_policy.json rejected: {e}")
+        return False
 
 
 def _coerce_policy(policy: PrivacyPolicy | list[str]) -> PrivacyPolicy:
@@ -1520,7 +1552,8 @@ def action_contacts_lookup(params, conn, contacts, privacy_policy):
     nl = name.lower()
     matches = []
     for handle, full_name in contacts.items():
-        if not is_read_allowed(handle, handle, privacy_policy):
+        # Manager role: unfiltered contacts
+        if bridge_role() != "manager" and not is_read_allowed(handle, handle, privacy_policy):
             continue
         if nl in full_name.lower():
             if "@" in handle:
@@ -1669,6 +1702,7 @@ def action_status(params, conn, contacts, privacy_policy):
         "wrapper_mode": WRAPPER_MODE,
         "host_display_name": HOST_DISPLAY_NAME,
         "launchd_label": "com.jeffhuber.grokbot-imessage",
+        "confirmation_helper_path": str(CONFIRM_HELPER_PATH),
         "code_root": str(CODE_ROOT),
         "bridge_root": str(BRIDGE_ROOT),
         "policy_dir": str(POLICY_ROOT),
@@ -1721,6 +1755,9 @@ def action_send_preview(params, conn, contacts, privacy_policy):
     that skips preview — or swaps the body between preview and send — is
     rejected helper-side.
     """
+    if not is_send_policy_enabled():
+        raise ValueError("send operations are disabled by policy")
+
     to = validate_send_recipient(params.get("to"))
     text = validate_send_text(params.get("text"))
     service = validate_service(params.get("service"))
@@ -1763,6 +1800,9 @@ def action_send(params, conn, contacts, privacy_policy):
     the clause statically from the validated service name so no untrusted
     input is ever interpolated into that slot.
     """
+    if not is_send_policy_enabled():
+        raise ValueError("send operations are disabled by policy")
+
     to = validate_send_recipient(params.get("to"))
     text = validate_send_text(params.get("text"))
     service = validate_service(params.get("service"))
@@ -2064,10 +2104,12 @@ def main() -> None:
     # v0.4.0+: garbage-collect stale send nonces from previews that never
     # got a matching send (user cancelled, the host stopped before sending). Cheap; touches
     # only ~/imessage-bridge/nonces/ and only a few files at most.
-    try:
-        reap_expired_nonces()
-    except Exception as e:
-        log(f"reap_expired_nonces error: {e!r}")
+    # Manager role: skip nonce reaping (no nonces directory created).
+    if bridge_role() != "manager":
+        try:
+            reap_expired_nonces()
+        except Exception as e:
+            log(f"reap_expired_nonces error: {e!r}")
 
     # Only process complete request files (*.json, not temp/partial suffixes).
     with _private_directory_fd(REQUESTS_DIR) as requests_fd:
