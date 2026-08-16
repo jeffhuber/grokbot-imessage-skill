@@ -29,7 +29,7 @@
     {
       "logical_name": "imessage_helper.c",
       "path": "bin/imessage_helper.c",
-      "sha256": "388bbed53c61e08a18fb31433f702214d944ccc73d6b100abe4228f38f8edb4f"
+      "sha256": "3b55690bf55f152d64260ea077107e407828634cf11d6d05021f3315d42947c6"
     },
     {
       "logical_name": "confirm_imessage_send.m",
