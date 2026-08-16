@@ -49,6 +49,8 @@ jobs:
           -DHELPER_DISPLAY_NAME='"grokbot-imessage-helper"'
           -DHOST_DISPLAY_NAME='"Grok Bot"'
           -fsyntax-only bin/imessage_helper.c
+      - name: Test product mode wrapper (CORE-2)
+        run: bash tools/test_product_mode.sh
       - name: Compile native confirmation helper
         run: >-
           clang -Wall -Wextra -Werror -fobjc-arc
