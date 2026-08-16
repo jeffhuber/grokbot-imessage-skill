@@ -639,18 +639,20 @@ def lookup_name(chat_id: str, sender: str, contacts: dict[str, str]) -> str:
 
 def load_chat_participants(
     conn: sqlite3.Connection, chat_rowids: Iterable[int] | None = None
-) -> dict[str, list[str]]:
-    """Return {chat_identifier: [participant_handle, ...]}.
+) -> dict[Any, list[str]]:
+    """Return participant handles keyed by chat identifier or row ID.
 
     Used to build a human label for group chats whose chat_identifier is
     just "chatNNNNN…" and whose display_name is empty. With participants
     in hand we can render e.g. "Alice, Bob & 2 others" instead of the
     opaque group id. `chat_rowids` restricts the scan to candidate chats
-    (bounded callers such as list_chats); None keeps today's full scan.
+    (bounded callers such as list_chats) and returns a ROWID-keyed map so
+    duplicate chat_identifier rows cannot cross-contaminate participants.
+    None keeps today's full scan and identifier-keyed map for review.
     """
     cur = conn.cursor()
     sql = """
-        SELECT c.chat_identifier, h.id
+        SELECT c.ROWID, c.chat_identifier, h.id
         FROM chat c
         JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
         JOIN handle h ON h.ROWID = chj.handle_id
@@ -668,14 +670,13 @@ def load_chat_participants(
             cur.execute(sql + " WHERE c.ROWID IN (%s)" % ",".join("?" * len(chunk)), chunk)
             rows.extend(cur.fetchall())
         out: dict[str, list[str]] = defaultdict(list)
-        for chat_ident, handle_id in rows:
-            ci = chat_ident.decode("utf-8", "ignore") if isinstance(chat_ident, bytes) else (chat_ident or "")
+        for chat_rowid, _chat_ident, handle_id in rows:
             hi = handle_id.decode("utf-8", "ignore") if isinstance(handle_id, bytes) else (handle_id or "")
-            if ci and hi:
-                out[ci].append(hi)
+            if chat_rowid is not None and hi:
+                out[int(chat_rowid)].append(hi)
         return out
     out: dict[str, list[str]] = defaultdict(list)
-    for chat_ident, handle_id in cur.fetchall():
+    for _chat_rowid, chat_ident, handle_id in cur.fetchall():
         ci = chat_ident.decode("utf-8", "ignore") if isinstance(chat_ident, bytes) else (chat_ident or "")
         hi = handle_id.decode("utf-8", "ignore") if isinstance(handle_id, bytes) else (handle_id or "")
         if ci and hi:
@@ -1596,6 +1597,7 @@ def action_list_chats(params, conn, contacts, privacy_policy):
     ql = query.lower() if query else None
     items: list[dict] = []
     for row in rows:
+        chat_rowid = int(row[0])
         chat_id = _decode_db_text(row[1])
         display = _decode_db_text(row[2])
         service = _decode_db_text(row[3])
@@ -1607,7 +1609,7 @@ def action_list_chats(params, conn, contacts, privacy_policy):
         kind = _chat_kind(chat_id, style)
         if kind == "group" and not include_groups:
             continue
-        participants = list(participants_by_chat.get(chat_id, []))
+        participants = list(participants_by_chat.get(chat_rowid, []))
         if kind == "direct" and not participants:
             participants = [chat_id]
         if kind == "group":

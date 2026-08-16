@@ -246,6 +246,30 @@ class ListChatsBoundsTests(_FixtureMixin, unittest.TestCase):
         self.assertTrue(any("chat_handle_join" in s and "WHERE c.ROWID IN" in s for s in self.statements), joined)
         self.assertNotIn("'chat999'", json.dumps(self._list(days=30)))
 
+    def test_duplicate_chat_identifiers_keep_row_participants_separate(self) -> None:
+        same_identifier = "chat-duplicate"
+        self.conn.execute("INSERT INTO chat VALUES (50, ?, '', 'iMessage', 43)", (same_identifier,))
+        self.conn.execute("INSERT INTO chat VALUES (51, ?, '', 'SMS', 43)", (same_identifier,))
+        self.conn.execute("INSERT INTO chat_handle_join VALUES (50, 1)")
+        self.conn.execute("INSERT INTO chat_handle_join VALUES (51, 2)")
+        self.conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?, ?, ?, ?)",
+            (50, _apple_ns(1.5), f"{TEXT_SENTINEL}-50", ATTR_SENTINEL + b"50", 0, 1),
+        )
+        self.conn.execute("INSERT INTO chat_message_join VALUES (50, 50)")
+        self.conn.execute(
+            "INSERT INTO message VALUES (?, ?, ?, ?, ?, ?)",
+            (51, _apple_ns(1.25), f"{TEXT_SENTINEL}-51", ATTR_SENTINEL + b"51", 0, 2),
+        )
+        self.conn.execute("INSERT INTO chat_message_join VALUES (51, 51)")
+        self.conn.commit()
+
+        matches = [c for c in self._list(days=30, limit=20)["chats"] if c["chat_id"] == same_identifier]
+
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(sorted(c["participants"] for c in matches), [["+14155551234"], ["+14155559876"]])
+        self.assertEqual([c["participant_count"] for c in matches], [1, 1])
+
     def test_query_bounds(self) -> None:
         with self.assertRaises(ValueError):
             self._list(query="q" * (helper.MAX_LIST_CHATS_QUERY_LEN + 1))
