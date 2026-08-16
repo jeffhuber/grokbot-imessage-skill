@@ -22,6 +22,7 @@ hardening the wrapper provides.
 
 from __future__ import annotations
 
+import fcntl
 import glob
 import json
 import os
@@ -777,7 +778,7 @@ def load_privacy_policy() -> PrivacyPolicy:
                     can_read_policy = False
             except FileNotFoundError:
                 can_read_policy = False
-        
+
         if can_read_policy:
             try:
                 mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
@@ -793,7 +794,7 @@ def load_privacy_policy() -> PrivacyPolicy:
                 mode = "allowlist"
             else:
                 mode = "blocklist"
-        
+
         if mode not in ("allowlist", "blocklist"):
             log(f"invalid read policy {mode!r}; failing closed in allowlist mode")
             mode = "allowlist"
@@ -2093,6 +2094,66 @@ def process_request(
             cleanup_tmpdb(db_path)
 
 
+def _acquire_bridge_lock(control_fd: int, timeout_s: float = OSASCRIPT_TIMEOUT_S + 10.0) -> int:
+    """Acquire an exclusive lock on control/lock with bounded wait.
+
+    Returns the lock file descriptor on success. The caller must close it
+    to release the lock. Raises RuntimeError on timeout or failure.
+    """
+    open_deadline = time.time() + timeout_s
+    while True:
+        try:
+            lock_fd = os.open(
+                "lock",
+                os.O_CREAT | os.O_RDWR | _FILE_NOFOLLOW_FLAGS,
+                0o600,
+                dir_fd=control_fd,
+            )
+            break
+        except FileNotFoundError:
+            if time.time() >= open_deadline:
+                message = "could not create bridge lock file"
+                log(message)
+                raise RuntimeError(message)
+            time.sleep(0.01)
+        except OSError as exc:
+            message = f"could not open bridge lock file: {exc}"
+            log(message)
+            raise RuntimeError(message) from exc
+    try:
+        _validate_regular_file(lock_fd, "control/lock", private=True)
+    except Exception as exc:
+        os.close(lock_fd)
+        message = f"unsafe bridge lock file: {exc}"
+        log(message)
+        raise RuntimeError(message) from exc
+
+    # Try non-blocking lock first
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return lock_fd
+    except (OSError, BlockingIOError):
+        pass
+
+    # Lock is held; poll with bounded wait
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        time.sleep(0.05)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock_fd
+        except (OSError, BlockingIOError):
+            continue
+
+    message = (
+        f"could not acquire bridge lock within {timeout_s}s timeout; "
+        "another worker is processing this bridge"
+    )
+    log(message)
+    os.close(lock_fd)
+    raise RuntimeError(message)
+
+
 def main() -> None:
     for path in (LOG_PATH.parent, REQUESTS_DIR, RESPONSES_DIR):
         with _private_directory_fd(path, create=True):
@@ -2111,33 +2172,47 @@ def main() -> None:
         except Exception as e:
             log(f"reap_expired_nonces error: {e!r}")
 
-    # Only process complete request files (*.json, not temp/partial suffixes).
-    with _private_directory_fd(REQUESTS_DIR) as requests_fd:
-        pending = sorted(
-            name
-            for name in os.listdir(requests_fd)
-            if name.startswith("request-") and name.endswith(".json")
-        )
-        if not pending:
-            # launchd sometimes fires with no new file (e.g. directory-touch).
-            return
+    # Acquire per-bridge advisory lock to serialize workers on this bridge.
+    # Hold for the entire drain; re-list requests once after acquiring to
+    # catch any that arrived during the lock wait. The lock is released
+    # automatically when lock_fd is closed on exit.
+    try:
+        with _private_directory_fd(LOG_PATH.parent) as control_fd:
+            lock_fd = _acquire_bridge_lock(control_fd)
+    except RuntimeError as e:
+        log(f"bridge lock unavailable, deferring drain: {e}")
+        return
 
-        for name in pending:
-            request = Path(name)
-            req_stem = request.stem.replace("request-", "")
-            try:
-                process_request(request, privacy_policy, requests_fd=requests_fd)
-            except Exception as e:
-                log(f"request={name} unhandled error: {e!r}")
+    try:
+        # Only process complete request files (*.json, not temp/partial suffixes).
+        with _private_directory_fd(REQUESTS_DIR) as requests_fd:
+            pending = sorted(
+                name
+                for name in os.listdir(requests_fd)
+                if name.startswith("request-") and name.endswith(".json")
+            )
+            if not pending:
+                # launchd sometimes fires with no new file (e.g. directory-touch).
+                return
+
+            for name in pending:
+                request = Path(name)
+                req_stem = request.stem.replace("request-", "")
                 try:
-                    _bad_request(req_stem, f"request processing failed: {e}")
-                except Exception as response_error:
-                    log(f"request={name} could not write error response: {response_error!r}")
-            finally:
-                try:
-                    os.unlink(name, dir_fd=requests_fd)
+                    process_request(request, privacy_policy, requests_fd=requests_fd)
                 except Exception as e:
-                    log(f"could not unlink {name}: {e}")
+                    log(f"request={name} unhandled error: {e!r}")
+                    try:
+                        _bad_request(req_stem, f"request processing failed: {e}")
+                    except Exception as response_error:
+                        log(f"request={name} could not write error response: {response_error!r}")
+                finally:
+                    try:
+                        os.unlink(name, dir_fd=requests_fd)
+                    except Exception as e:
+                        log(f"could not unlink {name}: {e}")
+    finally:
+        os.close(lock_fd)
 
 
 if __name__ == "__main__":
