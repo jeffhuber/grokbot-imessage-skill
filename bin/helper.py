@@ -134,7 +134,11 @@ def _load_sibling(name: str):
 
 
 def _load_send_gate():
+    # Wrapper validate_file covers SEND_GATE_PATH ownership and permissions;
+    # we load by absolute path to honor IMESSAGE_SEND_GATE_PATH override.
     spec = _importlib_util.spec_from_file_location("send_gate", SEND_GATE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load send_gate from {SEND_GATE_PATH}")
     mod = _importlib_util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -689,14 +693,39 @@ def load_privacy_policy() -> PrivacyPolicy:
     if mode_override in ("allowlist", "blocklist"):
         mode = mode_override
     else:
-        try:
-            mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
-        except FileNotFoundError:
-            # Product mode: missing read_policy.txt defaults to allowlist (fail closed)
+        # Product mode: apply permission check to read_policy.txt
+        can_read_policy = True
+        if WRAPPER_MODE == "product":
+            try:
+                metadata = READ_POLICY_PATH.lstat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    log(f"read_policy.txt rejected: must be a regular file")
+                    can_read_policy = False
+                elif metadata.st_uid != os.getuid():
+                    log(f"read_policy.txt rejected: must be owned by current user (uid {os.getuid()})")
+                    can_read_policy = False
+                elif metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                    log(f"read_policy.txt rejected: must not be group/world-writable")
+                    can_read_policy = False
+            except FileNotFoundError:
+                can_read_policy = False
+        
+        if can_read_policy:
+            try:
+                mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
+            except FileNotFoundError:
+                # Product mode: missing read_policy.txt defaults to allowlist (fail closed)
+                if WRAPPER_MODE == "product":
+                    mode = "allowlist"
+                else:
+                    mode = "blocklist"
+        else:
+            # Product mode: permission check failed, treat as missing → allowlist (fail closed)
             if WRAPPER_MODE == "product":
                 mode = "allowlist"
             else:
                 mode = "blocklist"
+        
         if mode not in ("allowlist", "blocklist"):
             log(f"invalid read policy {mode!r}; failing closed in allowlist mode")
             mode = "allowlist"

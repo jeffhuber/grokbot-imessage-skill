@@ -4,13 +4,14 @@ import json
 import os
 import stat
 import struct
+import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from tests._helper_loader import helper
+from tests._helper_loader import REPO_ROOT, helper
 
 
 def make_attributed_blob(body: bytes) -> bytes:
@@ -270,6 +271,92 @@ class ProductModeTests(unittest.TestCase):
         self.assertIsInstance(status["policy_dir"], str)
         
         self.assertIn(status["wrapper_mode"], ("product", "baked"))
+
+    def test_read_policy_permission_rejection_in_product_mode(self) -> None:
+        """Verify that group-writable read_policy.txt is rejected in product mode."""
+        policy_dir = Path(self._tmp.name)
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        
+        read_policy_file = policy_dir / "read_policy.txt"
+        read_policy_file.write_text("blocklist\n")
+        read_policy_file.chmod(0o664)
+        
+        old_wrapper_mode = helper.WRAPPER_MODE
+        old_policy_root = helper.POLICY_ROOT
+        old_read_policy_path = helper.READ_POLICY_PATH
+        
+        try:
+            helper.WRAPPER_MODE = "product"
+            helper.POLICY_ROOT = policy_dir
+            helper.READ_POLICY_PATH = read_policy_file
+            
+            with mock.patch.object(helper, "log") as mock_log:
+                policy = helper.load_privacy_policy()
+                self.assertEqual(policy.mode, "allowlist")
+                logged = " ".join(str(call.args[0]) for call in mock_log.call_args_list)
+                self.assertIn("read_policy.txt rejected", logged)
+                self.assertIn("group/world-writable", logged)
+        finally:
+            helper.WRAPPER_MODE = old_wrapper_mode
+            helper.POLICY_ROOT = old_policy_root
+            helper.READ_POLICY_PATH = old_read_policy_path
+
+    def test_env_overrides_honored_at_import(self) -> None:
+        """Verify that env vars are honored when helper is imported."""
+        import importlib.util
+        
+        policy_dir = Path(self._tmp.name) / "custom_policy"
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        blocked_file = policy_dir / "blocked_chats.txt"
+        blocked_file.write_text("+14155551234\n")
+        blocked_file.chmod(0o600)
+        
+        send_gate_copy = Path(self._tmp.name) / "test_send_gate.py"
+        send_gate_copy.write_text((REPO_ROOT / "bin" / "send_gate.py").read_text())
+        confirm_helper_path = Path(self._tmp.name) / "test-confirm"
+        confirm_helper_path.write_text("#!/bin/sh\n")
+        
+        env_vars = {
+            "IMESSAGE_POLICY_DIR": str(policy_dir),
+            "IMESSAGE_SEND_GATE_PATH": str(send_gate_copy),
+            "IMESSAGE_CONFIRM_HELPER_PATH": str(confirm_helper_path),
+            "IMESSAGE_PRODUCT_ID": "test-custom-product",
+            "IMESSAGE_BRIDGE_DIR": self._tmp.name,
+        }
+        
+        env_backup = {k: os.environ.get(k) for k in env_vars}
+        for k, v in env_vars.items():
+            os.environ[k] = v
+        
+        try:
+            spec = importlib.util.spec_from_file_location("test_helper_fresh", REPO_ROOT / "bin" / "helper.py")
+            self.assertIsNotNone(spec, "spec_from_file_location returned None")
+            self.assertIsNotNone(spec.loader, "spec.loader is None")
+            
+            fresh_helper = importlib.util.module_from_spec(spec)
+            sys.modules["test_helper_fresh"] = fresh_helper
+            
+            try:
+                spec.loader.exec_module(fresh_helper)
+                
+                self.assertEqual(str(fresh_helper.POLICY_ROOT), str(policy_dir))
+                self.assertEqual(str(fresh_helper.SEND_GATE_PATH), str(send_gate_copy))
+                self.assertEqual(str(fresh_helper.CONFIRM_HELPER_PATH), str(confirm_helper_path))
+                self.assertEqual(fresh_helper.WRAPPER_MODE, "product")
+                self.assertEqual(fresh_helper.PRODUCT_ID, "test-custom-product")
+                
+                status = fresh_helper.action_status({}, None, {}, fresh_helper.load_privacy_policy())
+                self.assertEqual(status["product_id"], "test-custom-product")
+                self.assertEqual(status["wrapper_mode"], "product")
+                self.assertEqual(status["policy_dir"], str(policy_dir))
+            finally:
+                sys.modules.pop("test_helper_fresh", None)
+        finally:
+            for k, v in env_backup.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 class SendGateTests(unittest.TestCase):
