@@ -125,8 +125,7 @@ echo
 # Test 10: Validate-only for all product IDs
 echo "Test 10: Validate-only for all product IDs"
 for id in claude grok openai manager; do
-  output=$(/tmp/test-product-helper --product "$id" --validate-only)
-  if [ $? -ne 0 ]; then
+  if ! output=$(/tmp/test-product-helper --product "$id" --validate-only); then
     echo "✗ FAIL: --product $id --validate-only should succeed"
     exit 1
   fi
