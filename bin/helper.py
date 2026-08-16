@@ -1702,7 +1702,7 @@ def action_status(params, conn, contacts, privacy_policy):
         "product_id": PRODUCT_ID,
         "wrapper_mode": WRAPPER_MODE,
         "host_display_name": HOST_DISPLAY_NAME,
-        "launchd_label": "com.jeffhuber.grokbot-imessage",
+        "launchd_label": "com.jeffhuber.grokbot-imessage" if WRAPPER_MODE == "baked" else None,
         "confirmation_helper_path": str(CONFIRM_HELPER_PATH),
         "code_root": str(CODE_ROOT),
         "bridge_root": str(BRIDGE_ROOT),
