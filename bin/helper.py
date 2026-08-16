@@ -82,6 +82,14 @@ ALLOWLIST_PATH = Path(
     )
 )
 READ_POLICY_PATH = POLICY_ROOT / "read_policy.txt"
+SEND_GATE_PATH = Path(
+    os.path.abspath(
+        os.path.expanduser(
+            os.environ.get("IMESSAGE_SEND_GATE_PATH")
+            or str(CODE_ROOT / "bin" / "send_gate.py")
+        )
+    )
+)
 CONFIRM_HELPER_PATH = Path(
     os.path.abspath(
         os.path.expanduser(
@@ -92,6 +100,16 @@ CONFIRM_HELPER_PATH = Path(
 )
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
 HOST_DISPLAY_NAME = os.environ.get("IMESSAGE_HOST_DISPLAY_NAME", "Grok Bot")
+PRODUCT_ID = os.environ.get("IMESSAGE_PRODUCT_ID", "grokbot-imessage")
+
+# Detect wrapper mode: product if any IMESSAGE_* product vars set, else baked
+_PRODUCT_ENV_VARS = (
+    "IMESSAGE_PRODUCT_ID",
+    "IMESSAGE_POLICY_DIR",
+    "IMESSAGE_SEND_GATE_PATH",
+    "IMESSAGE_CONFIRM_HELPER_PATH",
+)
+WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
 HELPER_VERSION = "1.2.2"
 PROTOCOL_VERSION = "1.1"
@@ -115,12 +133,23 @@ def _load_sibling(name: str):
     return mod
 
 
+def _load_send_gate():
+    # Wrapper validate_file covers SEND_GATE_PATH ownership and permissions;
+    # we load by absolute path to honor IMESSAGE_SEND_GATE_PATH override.
+    spec = _importlib_util.spec_from_file_location("send_gate", SEND_GATE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load send_gate from {SEND_GATE_PATH}")
+    mod = _importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 # Route send_gate's state to the bridge so the send gate knows where to write
 # nonces. Preserve explicit values and retain the legacy name as a
 # compatibility input. Empty explicit values have already failed closed above.
 if "IMESSAGE_BRIDGE_DIR" not in os.environ and "COWORK_IMESSAGE_BRIDGE_DIR" not in os.environ:
     os.environ["IMESSAGE_BRIDGE_DIR"] = str(BRIDGE_ROOT)
-_send_gate = _load_sibling("send_gate")
+_send_gate = _load_send_gate()
 SEND_NONCE_TTL = _send_gate.SEND_NONCE_TTL
 SendGateError = _send_gate.SendGateError
 mint_send_nonce = _send_gate.mint_send_nonce
@@ -628,7 +657,7 @@ class PrivacyPolicy:
     allowlist: tuple[str, ...]
 
 
-def _load_list(path: Path, require_root_owner: bool = False) -> tuple[str, ...]:
+def _load_list(path: Path, require_root_owner: bool = False, require_uid_owner: bool = False) -> tuple[str, ...]:
     try:
         metadata = path.lstat()
     except FileNotFoundError:
@@ -642,6 +671,13 @@ def _load_list(path: Path, require_root_owner: bool = False) -> tuple[str, ...]:
             return ()
         if metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
             log(f"privacy policy rejected: {path} has group/world permissions")
+            return ()
+    if require_uid_owner:
+        if metadata.st_uid != os.getuid():
+            log(f"privacy policy rejected: {path} must be owned by the current user (uid {os.getuid()})")
+            return ()
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            log(f"privacy policy rejected: {path} must not be group/world-writable")
             return ()
     out = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -657,19 +693,50 @@ def load_privacy_policy() -> PrivacyPolicy:
     if mode_override in ("allowlist", "blocklist"):
         mode = mode_override
     else:
-        try:
-            mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
-        except FileNotFoundError:
-            mode = "blocklist"
+        # Product mode: apply permission check to read_policy.txt
+        can_read_policy = True
+        if WRAPPER_MODE == "product":
+            try:
+                metadata = READ_POLICY_PATH.lstat()
+                if not stat.S_ISREG(metadata.st_mode):
+                    log(f"read_policy.txt rejected: must be a regular file")
+                    can_read_policy = False
+                elif metadata.st_uid != os.getuid():
+                    log(f"read_policy.txt rejected: must be owned by current user (uid {os.getuid()})")
+                    can_read_policy = False
+                elif metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                    log(f"read_policy.txt rejected: must not be group/world-writable")
+                    can_read_policy = False
+            except FileNotFoundError:
+                can_read_policy = False
+        
+        if can_read_policy:
+            try:
+                mode = READ_POLICY_PATH.read_text(encoding="utf-8").strip().lower()
+            except FileNotFoundError:
+                # Product mode: missing read_policy.txt defaults to allowlist (fail closed)
+                if WRAPPER_MODE == "product":
+                    mode = "allowlist"
+                else:
+                    mode = "blocklist"
+        else:
+            # Product mode: permission check failed, treat as missing → allowlist (fail closed)
+            if WRAPPER_MODE == "product":
+                mode = "allowlist"
+            else:
+                mode = "blocklist"
+        
         if mode not in ("allowlist", "blocklist"):
             log(f"invalid read policy {mode!r}; failing closed in allowlist mode")
             mode = "allowlist"
 
     require_root = os.environ.get("COWORK_IMESSAGE_REQUIRE_ROOT_POLICY") == "1"
+    # Product mode: policy files must be uid-owned and not group/world-writable
+    require_uid = WRAPPER_MODE == "product"
     return PrivacyPolicy(
         mode=mode,
-        blocklist=_load_list(BLOCKLIST_PATH),
-        allowlist=_load_list(ALLOWLIST_PATH, require_root_owner=require_root),
+        blocklist=_load_list(BLOCKLIST_PATH, require_uid_owner=require_uid),
+        allowlist=_load_list(ALLOWLIST_PATH, require_root_owner=require_root, require_uid_owner=require_uid),
     )
 
 
@@ -1364,11 +1431,13 @@ def action_status(params, conn, contacts, privacy_policy):
     return {
         "helper_version": HELPER_VERSION,
         "protocol_version": PROTOCOL_VERSION,
-        "product_id": "grokbot-imessage",
+        "product_id": PRODUCT_ID,
+        "wrapper_mode": WRAPPER_MODE,
         "host_display_name": HOST_DISPLAY_NAME,
         "launchd_label": "com.jeffhuber.grokbot-imessage",
         "code_root": str(CODE_ROOT),
         "bridge_root": str(BRIDGE_ROOT),
+        "policy_dir": str(POLICY_ROOT),
         "install_root": str(CODE_ROOT),
         "python_version": sys.version.split()[0],
         "read_policy": {
