@@ -2,11 +2,52 @@
 
 This document describes the JSON-based request/response protocol that both Claude Cowork and Grok Bot use to communicate with the macOS helper.
 
-Protocol version: `1.1`
+Protocol version: `1.2`
 
 Clients should call `status` before their first message operation and require a
 compatible `protocol_version`. Minor versions add backward-compatible actions or
 fields; a future major-version mismatch must fail closed with upgrade guidance.
+
+Protocol history:
+
+- `1.2` — adds the manager-only `list_chats` action, the bridge role table
+  below, and the `bridge_role` / `allowed_actions` fields in `status`.
+- `1.1` — `status` action and protocol compatibility reporting.
+
+## Bridge Roles
+
+Every bridge has a role. The worker reads it from `IMESSAGE_BRIDGE_ROLE`
+(set by the wrapper; the DIY installers set nothing, which means `host`) and
+enforces the table below **inside the worker**, before any database is opened.
+Hiding an action in a host, plugin, or app layer is not sufficient and is not
+relied on. Unknown role values fail closed: no action is served.
+
+| Action | `host` | `manager` | Returns message bodies |
+| --- | --- | --- | --- |
+| `status` | yes | yes | no |
+| `review`, `search`, `chat_history` | yes | **no** | yes |
+| `response_stats` | yes | no | no |
+| `contacts_lookup` | yes (policy-filtered) | yes | no |
+| `send_preview`, `send` | yes | no | draft only |
+| `list_chats` | **no** | yes | no |
+
+A `host` bridge is what an AI host talks to. A `manager` bridge is operated by
+a local management tool for policy discovery and diagnostics; it never serves a
+body-returning action, and a host bridge never enumerates chats. Requesting an
+action the role does not permit returns:
+
+```json
+{
+  "id": "abc123",
+  "ok": false,
+  "error": "action not permitted on this bridge",
+  "bridge_role": "host",
+  "allowed_actions": ["chat_history", "contacts_lookup", "response_stats", "review", "search", "send", "send_preview", "status"]
+}
+```
+
+`allowed_actions` in every error response, including `unknown action`, is the
+list for the current role, not the worker's full action table.
 
 ## Architecture
 
@@ -106,9 +147,10 @@ On error:
 {"id": "abc123", "action": "status", "params": {}}
 ```
 
-The response includes `helper_version`, `protocol_version`, `code_root`,
-`bridge_root`, `python_version`, policy metadata, and local boolean checks for
-the database, request directories, and native confirmation helper.
+The response includes `helper_version`, `protocol_version`, `bridge_role`,
+`allowed_actions` (sorted, for this role), `code_root`, `bridge_root`,
+`python_version`, policy metadata, and local boolean checks for the database,
+request directories, and native confirmation helper.
 
 ---
 
@@ -331,6 +373,85 @@ Computes reply-time statistics over the specified window.
 ```
 
 Searches Contacts.app by name. Returns up to 25 matches. Each match contains either `phone_last10` (last 10 digits of phone number) or `email` (email address), depending on the contact's identifier. Useful for disambiguating before `chat_history` or `send`.
+
+---
+
+### `list_chats` — Enumerate threads without content (manager only)
+
+Available only on a `manager` bridge (see Bridge Roles). Lists the chats that
+had activity inside a window so a management tool can show the user which
+threads exist and let them build an allowlist or blocklist. The read policy is
+deliberately not applied — the point is to see the threads a policy will be
+written about — and the action **never selects `message.text` or
+`message.attributedBody`**. A fixture database with sentinel bodies asserts that
+no body reaches the response.
+
+**Request:**
+```json
+{
+  "id": "abc123",
+  "action": "list_chats",
+  "params": {
+    "days": 365,
+    "limit": 200,
+    "include_groups": true,
+    "query": "family"
+  }
+}
+```
+
+| Param | Type | Default | Bounds |
+| --- | --- | --- | --- |
+| `days` | number | `365` | `(0, 3650]` — its own bound, distinct from the 90-day cap on `review`/`search`/`chat_history` |
+| `limit` | integer | `200` | `(0, 500]` |
+| `include_groups` | boolean | `true` | must be a JSON boolean |
+| `query` | string | none | ≤ 100 chars; case-insensitive substring match on `label`, `display_name`, `chat_id`, and participant handles; blank means no filter |
+
+**Response:**
+```json
+{
+  "id": "abc123",
+  "ok": true,
+  "action": "list_chats",
+  "window_days": 365,
+  "chat_count": 2,
+  "truncated": false,
+  "chats": [
+    {
+      "chat_id": "chat100200300",
+      "kind": "group",
+      "display_name": "Family",
+      "label": "Family",
+      "participants": ["+14155551234", "+14155559876", "bob@example.com"],
+      "participant_count": 3,
+      "service": "iMessage",
+      "message_count": 41,
+      "last_activity_date": "2026-08-14"
+    },
+    {
+      "chat_id": "+14155551234",
+      "kind": "direct",
+      "display_name": "",
+      "label": "Alice Example",
+      "participants": ["+14155551234"],
+      "participant_count": 1,
+      "service": "iMessage",
+      "message_count": 12,
+      "last_activity_date": "2026-08-13"
+    }
+  ]
+}
+```
+
+- Ordered by most recent activity first. `truncated` is `true` when more chats
+  matched than `limit`.
+- `kind` comes from `chat.style` (`43` group, `45` direct); the
+  `chat…` identifier heuristic is the fallback.
+- `label` is the group name, or a participant-derived label for unnamed
+  groups, or the contact name for a direct chat; it falls back to `chat_id`.
+- `participants` holds at most 10 handles; `participant_count` is the full
+  count.
+- `last_activity_date` is an ISO **day**, not a timestamp.
 
 ---
 
