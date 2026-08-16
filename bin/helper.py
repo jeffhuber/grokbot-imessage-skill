@@ -202,6 +202,7 @@ MAX_SEARCH_LEN = 200
 MAX_LIST_CHATS_DAYS = 3650
 LIST_CHATS_DEFAULT_DAYS = 365
 LIST_CHATS_DEFAULT_LIMIT = 200
+LIST_CHATS_FILTER_SCAN_LIMIT = 500
 MAX_LIST_CHATS_QUERY_LEN = 100
 MAX_LIST_CHATS_PARTICIPANTS = 10
 MAX_TEXT_SNIPPET = 600
@@ -1583,13 +1584,20 @@ def action_list_chats(params, conn, contacts, privacy_policy):
         GROUP BY c.ROWID
         ORDER BY MAX(m.date) DESC
         """
-    if query is None and include_groups:
+    post_filtering = query is not None or not include_groups
+    candidate_limit = limit if not post_filtering else max(limit + 1, LIST_CHATS_FILTER_SCAN_LIMIT)
+    if not post_filtering:
         # No post-filtering: let SQLite stop after limit+1 rows so we can
         # report truncation without pulling every chat.
         cur.execute(sql + " LIMIT ?", (cutoff_ns, limit + 1))
     else:
-        cur.execute(sql, (cutoff_ns,))
+        # Query/group filters happen after participant labels are assembled.
+        # Bound the candidate scan anyway so filtered requests cannot walk a
+        # whole large chat database before returning no matches.
+        cur.execute(sql + " LIMIT ?", (cutoff_ns, candidate_limit + 1))
     rows = cur.fetchall()
+    candidate_truncated = len(rows) > candidate_limit
+    rows = rows[:candidate_limit]
 
     # Participants only for the candidate chats (bounded by LIMIT above), not
     # a full chat_handle_join scan.
@@ -1639,7 +1647,7 @@ def action_list_chats(params, conn, contacts, privacy_policy):
         if len(items) > limit:
             break
 
-    truncated = len(items) > limit
+    truncated = len(items) > limit or candidate_truncated
     items = items[:limit]
     return {
         "window_days": days,

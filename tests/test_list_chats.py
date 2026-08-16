@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import time
@@ -245,6 +246,42 @@ class ListChatsBoundsTests(_FixtureMixin, unittest.TestCase):
         joined = "\n".join(self.statements)
         self.assertTrue(any("chat_handle_join" in s and "WHERE c.ROWID IN" in s for s in self.statements), joined)
         self.assertNotIn("'chat999'", json.dumps(self._list(days=30)))
+
+    def test_filtered_requests_use_bounded_candidate_scan(self) -> None:
+        for idx in range(20):
+            rowid = 100 + idx
+            self.conn.execute(
+                "INSERT INTO chat VALUES (?, ?, '', 'iMessage', 43)",
+                (rowid, f"chat-extra-{idx}"),
+            )
+            self.conn.execute("INSERT INTO chat_handle_join VALUES (?, 3)", (rowid,))
+            self.conn.execute(
+                "INSERT INTO message VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    rowid,
+                    _apple_ns(0.1 + idx * 0.01),
+                    f"{TEXT_SENTINEL}-{rowid}",
+                    ATTR_SENTINEL + str(rowid).encode(),
+                    0,
+                    3,
+                ),
+            )
+            self.conn.execute("INSERT INTO chat_message_join VALUES (?, ?)", (rowid, rowid))
+        self.conn.commit()
+
+        self.statements.clear()
+        with mock.patch.object(helper, "LIST_CHATS_FILTER_SCAN_LIMIT", 5):
+            result = self._list(query="no-match", days=30, limit=2)
+
+        joined = "\n".join(self.statements)
+        self.assertEqual(result["chats"], [])
+        self.assertTrue(result["truncated"])
+        self.assertTrue(any("LIMIT 6" in s for s in self.statements), joined)
+        participant_scans = [s for s in self.statements if "chat_handle_join" in s]
+        self.assertEqual(len(participant_scans), 1, joined)
+        match = re.search(r"IN \(([^)]+)\)", participant_scans[0])
+        self.assertIsNotNone(match, participant_scans[0])
+        self.assertEqual(len(match.group(1).split(",")), 5, participant_scans[0])
 
     def test_duplicate_chat_identifiers_keep_row_participants_separate(self) -> None:
         same_identifier = "chat-duplicate"
