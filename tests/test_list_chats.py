@@ -227,10 +227,24 @@ class ListChatsBoundsTests(_FixtureMixin, unittest.TestCase):
                          helper.MAX_LIST_CHATS_DAYS)
 
     def test_limit_bounds(self) -> None:
-        for bad in (0, -5, helper.MAX_LIMIT + 1, "many"):
+        for bad in (0, -5, helper.MAX_LIMIT + 1, "many", 1.9, 2.5, True):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     self._list(limit=bad)
+        # integral floats and numeric strings are accepted as integers
+        self.assertEqual(self._list(limit=2.0)["chat_count"], 2)
+        self.assertEqual(self._list(limit="2")["chat_count"], 2)
+
+    def test_participants_loaded_only_for_candidate_chats(self) -> None:
+        # Add a chat with no messages: it must not be scanned by list_chats.
+        self.conn.execute("INSERT INTO chat VALUES (99, 'chat999', 'Idle', 'iMessage', 43)")
+        self.conn.execute("INSERT INTO chat_handle_join VALUES (99, 4)")
+        self.conn.commit()
+        self.statements.clear()
+        self._list(days=30)
+        joined = "\n".join(self.statements)
+        self.assertTrue(any("chat_handle_join" in s and "WHERE c.ROWID IN" in s for s in self.statements), joined)
+        self.assertNotIn("'chat999'", json.dumps(self._list(days=30)))
 
     def test_query_bounds(self) -> None:
         with self.assertRaises(ValueError):
@@ -350,6 +364,13 @@ class RoleGateTests(_FixtureMixin, unittest.TestCase):
         self.assertFalse(resp["ok"])
         self.assertEqual(resp["error"], "action not permitted on this bridge")
         self.assertEqual(resp["allowed_actions"], [])
+
+    def test_execution_error_carries_allowed_actions(self) -> None:
+        os.environ[_ROLE_ENV] = "manager"
+        resp = self._run("list_chats", {"days": 0})
+        self.assertFalse(resp["ok"])
+        self.assertIn("days must be", resp["error"])
+        self.assertEqual(resp["allowed_actions"], sorted(helper._MANAGER_ACTIONS))
 
     def test_unknown_action_lists_role_actions(self) -> None:
         os.environ.pop(_ROLE_ENV, None)

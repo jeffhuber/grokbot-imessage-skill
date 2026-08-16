@@ -637,23 +637,43 @@ def lookup_name(chat_id: str, sender: str, contacts: dict[str, str]) -> str:
     return ""
 
 
-def load_chat_participants(conn: sqlite3.Connection) -> dict[str, list[str]]:
-    """Return {chat_identifier: [participant_handle, ...]} for every chat.
+def load_chat_participants(
+    conn: sqlite3.Connection, chat_rowids: Iterable[int] | None = None
+) -> dict[str, list[str]]:
+    """Return {chat_identifier: [participant_handle, ...]}.
 
     Used to build a human label for group chats whose chat_identifier is
     just "chatNNNNN…" and whose display_name is empty. With participants
     in hand we can render e.g. "Alice, Bob & 2 others" instead of the
-    opaque group id.
+    opaque group id. `chat_rowids` restricts the scan to candidate chats
+    (bounded callers such as list_chats); None keeps today's full scan.
     """
     cur = conn.cursor()
-    cur.execute(
-        """
+    sql = """
         SELECT c.chat_identifier, h.id
         FROM chat c
         JOIN chat_handle_join chj ON chj.chat_id = c.ROWID
         JOIN handle h ON h.ROWID = chj.handle_id
         """
-    )
+    if chat_rowids is None:
+        cur.execute(sql)
+    else:
+        ids = sorted({int(r) for r in chat_rowids})
+        if not ids:
+            return defaultdict(list)
+        # SQLite's default variable limit is 999; chunk to stay under it.
+        rows: list = []
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            cur.execute(sql + " WHERE c.ROWID IN (%s)" % ",".join("?" * len(chunk)), chunk)
+            rows.extend(cur.fetchall())
+        out: dict[str, list[str]] = defaultdict(list)
+        for chat_ident, handle_id in rows:
+            ci = chat_ident.decode("utf-8", "ignore") if isinstance(chat_ident, bytes) else (chat_ident or "")
+            hi = handle_id.decode("utf-8", "ignore") if isinstance(handle_id, bytes) else (handle_id or "")
+            if ci and hi:
+                out[ci].append(hi)
+        return out
     out: dict[str, list[str]] = defaultdict(list)
     for chat_ident, handle_id in cur.fetchall():
         ci = chat_ident.decode("utf-8", "ignore") if isinstance(chat_ident, bytes) else (chat_ident or "")
@@ -953,6 +973,22 @@ def validate_list_chats_days(v: Any) -> float:
     if n <= 0 or n > MAX_LIST_CHATS_DAYS:
         raise ValueError(f"days must be in (0, {MAX_LIST_CHATS_DAYS}]")
     return n
+
+
+def validate_list_chats_limit(v: Any) -> int:
+    """`limit` is an integer in the protocol; reject fractional values."""
+    if isinstance(v, bool):
+        raise ValueError("limit must be an integer")
+    if isinstance(v, float):
+        if not v.is_integer():
+            raise ValueError("limit must be an integer")
+        v = int(v)
+    if isinstance(v, str):
+        try:
+            v = int(v.strip())
+        except ValueError:
+            raise ValueError("limit must be an integer")
+    return validate_limit(v)
 
 
 def validate_list_chats_query(v: Any) -> str | None:
@@ -1492,7 +1528,9 @@ def action_contacts_lookup(params, conn, contacts, privacy_policy):
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
 
 
-# chat.style values observed in chat.db: 43 = group, 45 = direct.
+# chat.style in chat.db is IMChatStyle: 43 (ASCII '+') = group chat,
+# 45 (ASCII '-') = one-to-one "instant message" chat. Same mapping as
+# ENGINEERING_PLAN §2.4 and the review classifier's chat-id heuristic.
 _CHAT_STYLE_GROUP = 43
 _CHAT_STYLE_DIRECT = 45
 
@@ -1523,14 +1561,15 @@ def action_list_chats(params, conn, contacts, privacy_policy):
     exist so a policy can be written about them.
     """
     days = validate_list_chats_days(params.get("days", LIST_CHATS_DEFAULT_DAYS))
-    limit = validate_limit(params.get("limit", LIST_CHATS_DEFAULT_LIMIT))
+    limit = validate_list_chats_limit(params.get("limit", LIST_CHATS_DEFAULT_LIMIT))
     include_groups = validate_bool(params.get("include_groups"), "include_groups", True)
     query = validate_list_chats_query(params.get("query"))
     cutoff_ns = to_apple_ns(time.time() - days * 86400)
 
     cur = conn.cursor()
     sql = """
-        SELECT c.chat_identifier,
+        SELECT c.ROWID,
+               c.chat_identifier,
                COALESCE(c.display_name, ''),
                COALESCE(c.service_name, ''),
                c.style,
@@ -1551,16 +1590,18 @@ def action_list_chats(params, conn, contacts, privacy_policy):
         cur.execute(sql, (cutoff_ns,))
     rows = cur.fetchall()
 
-    participants_by_chat = load_chat_participants(conn)
+    # Participants only for the candidate chats (bounded by LIMIT above), not
+    # a full chat_handle_join scan.
+    participants_by_chat = load_chat_participants(conn, (row[0] for row in rows))
     ql = query.lower() if query else None
     items: list[dict] = []
     for row in rows:
-        chat_id = _decode_db_text(row[0])
-        display = _decode_db_text(row[1])
-        service = _decode_db_text(row[2])
-        style = row[3]
-        message_count = int(row[4] or 0)
-        last_ns = row[5]
+        chat_id = _decode_db_text(row[1])
+        display = _decode_db_text(row[2])
+        service = _decode_db_text(row[3])
+        style = row[4]
+        message_count = int(row[5] or 0)
+        last_ns = row[6]
         if not chat_id:
             continue
         kind = _chat_kind(chat_id, style)
@@ -1890,7 +1931,8 @@ def _read_request_text(req_path: Path, requests_fd: int | None) -> str:
 
 
 def _bad_request(req_stem: str, error: str, *, req_id: str | None = None) -> None:
-    response: dict[str, Any] = {"ok": False, "error": error}
+    response: dict[str, Any] = {"ok": False, "error": error,
+                                "allowed_actions": sorted(allowed_actions())}
     if req_id is not None:
         response["id"] = req_id
     write_response(req_stem, response)
@@ -1994,6 +2036,7 @@ def process_request(
         log(traceback.format_exc())
         write_response(req_stem, {
             "id": req_id, "action": action, "ok": False, "error": str(e),
+            "allowed_actions": sorted(permitted),
         })
     finally:
         if db_path is not None:
