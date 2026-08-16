@@ -170,8 +170,20 @@ def _load_sibling(name: str):
 
 
 def _load_send_gate():
-    # Wrapper validate_file covers SEND_GATE_PATH ownership and permissions;
-    # we load by absolute path to honor IMESSAGE_SEND_GATE_PATH override.
+    # Item 3: defense-in-depth file validation
+    # Wrapper validate_file is the trust boundary; this check adds depth.
+    try:
+        metadata = SEND_GATE_PATH.lstat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RuntimeError(f"send_gate must be a regular file: {SEND_GATE_PATH}")
+        # Root-owned or uid-owned both acceptable
+        if metadata.st_uid != 0 and metadata.st_uid != os.getuid():
+            raise RuntimeError(f"send_gate must be owned by root or current user: {SEND_GATE_PATH}")
+        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise RuntimeError(f"send_gate must not be group/world-writable: {SEND_GATE_PATH}")
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"send_gate not found: {SEND_GATE_PATH}") from exc
+    
     spec = _importlib_util.spec_from_file_location("send_gate", SEND_GATE_PATH)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"failed to load send_gate from {SEND_GATE_PATH}")
@@ -738,10 +750,15 @@ def _load_list(path: Path, require_root_owner: bool = False, require_uid_owner: 
             log(f"privacy policy rejected: {path} has group/world permissions")
             return ()
     if require_uid_owner:
-        if metadata.st_uid != os.getuid():
+        # Root-owned satisfies uid check (item 2: root/uid precedence)
+        if metadata.st_uid == 0:
+            if metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                log(f"privacy policy rejected: {path} has group/world permissions")
+                return ()
+        elif metadata.st_uid != os.getuid():
             log(f"privacy policy rejected: {path} must be owned by the current user (uid {os.getuid()})")
             return ()
-        if metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        elif metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             log(f"privacy policy rejected: {path} must not be group/world-writable")
             return ()
     out = []
@@ -762,7 +779,7 @@ def load_privacy_policy() -> PrivacyPolicy:
     if mode_override in ("allowlist", "blocklist"):
         mode = mode_override
     else:
-        # Product mode: apply permission check to read_policy.txt
+        # Item 1: apply the same ownership/mode check to read_policy.txt
         can_read_policy = True
         if WRAPPER_MODE == "product":
             try:
@@ -770,6 +787,11 @@ def load_privacy_policy() -> PrivacyPolicy:
                 if not stat.S_ISREG(metadata.st_mode):
                     log(f"read_policy.txt rejected: must be a regular file")
                     can_read_policy = False
+                # Root-owned satisfies (same as _load_list)
+                elif metadata.st_uid == 0:
+                    if metadata.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+                        log(f"read_policy.txt rejected: has group/world permissions")
+                        can_read_policy = False
                 elif metadata.st_uid != os.getuid():
                     log(f"read_policy.txt rejected: must be owned by current user (uid {os.getuid()})")
                     can_read_policy = False
