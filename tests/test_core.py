@@ -23,6 +23,20 @@ def make_attributed_blob(body: bytes) -> bytes:
     return prefix + b"\x82" + struct.pack("<I", len(body)) + body
 
 
+def make_segmented_attributed_blob(*segments: bytes) -> bytes:
+    header = b"streamtyped\x00\x00\x00\x00\x00"
+    body = bytearray(header)
+    for segment in segments:
+        body += b"NSString\x01\x2b"
+        if len(segment) < 0x80:
+            body.append(len(segment))
+        else:
+            body.append(0x81)
+            body += struct.pack("<H", len(segment))
+        body += segment
+    return bytes(body)
+
+
 class ValidationTests(unittest.TestCase):
     def test_send_recipient_accepts_supported_handles(self) -> None:
         for value in (
@@ -72,6 +86,27 @@ class AttributedBodyTests(unittest.TestCase):
                     helper.decode_attributed_body(make_attributed_blob(text.encode())),
                     text,
                 )
+
+    def test_data_detected_span_segments_are_joined(self) -> None:
+        blob = make_segmented_attributed_blob(
+            b"Call me at ",
+            b"(415) 555-0123",
+        )
+        self.assertEqual(
+            helper.decode_attributed_body(blob),
+            "Call me at (415) 555-0123",
+        )
+
+    def test_data_detector_metadata_after_gap_is_not_appended(self) -> None:
+        blob = (
+            make_segmented_attributed_blob(b"Call me at ", b"(415) 555-0123")
+            + b"attribute-run"
+            + make_segmented_attributed_blob(b"tel:+14155550123")[16:]
+        )
+        self.assertEqual(
+            helper.decode_attributed_body(blob),
+            "Call me at (415) 555-0123",
+        )
 
     def test_malformed_or_truncated_bodies_fail_closed(self) -> None:
         values = (
