@@ -316,6 +316,62 @@ def _attributed_fail(data: bytes, reason: str) -> str:
     return ""
 
 
+def _attributed_string_at(data: bytes, idx: int) -> tuple[str, int] | None:
+    p = idx + len(b"NSString") + 1
+
+    while p < len(data) and data[p] in (0x84, 0x94, 0x85, 0x95, 0x01, 0x86):
+        p += 1
+
+    if p + 8 <= len(data) and data[p : p + 8] == b"NSObject":
+        p += 8
+        while p < len(data) and data[p] in (0x84, 0x94, 0x85, 0x95, 0x01, 0x86):
+            p += 1
+
+    if p < len(data) and data[p] == 0x2B:
+        p += 1
+
+    if p >= len(data):
+        return None
+
+    b0 = data[p]
+    if b0 == 0x81:
+        if p + 3 > len(data):
+            return None
+        length = struct.unpack("<H", data[p + 1 : p + 3])[0]
+        p += 3
+    elif b0 == 0x82:
+        if p + 5 > len(data):
+            return None
+        length = struct.unpack("<I", data[p + 1 : p + 5])[0]
+        p += 5
+    elif b0 < 0x80:
+        length = b0
+        p += 1
+    else:
+        p += 1
+        if p >= len(data):
+            return None
+        b0 = data[p]
+        if b0 == 0x81:
+            if p + 3 > len(data):
+                return None
+            length = struct.unpack("<H", data[p + 1 : p + 3])[0]
+            p += 3
+        elif b0 < 0x80:
+            length = b0
+            p += 1
+        else:
+            return None
+
+    if length <= 0 or p + length > len(data):
+        return None
+
+    try:
+        return data[p : p + length].decode("utf-8"), p + length
+    except Exception:
+        return None
+
+
 def decode_attributed_body(blob: bytes | None) -> str:
     if not blob:
         return ""
@@ -326,62 +382,33 @@ def decode_attributed_body(blob: bytes | None) -> str:
     if b"streamtyped" not in data[:16]:
         return ""
 
-    idx = data.find(b"NSString")
-    if idx == -1:
+    if b"NSString" not in data:
         return ""
-    p = idx + len(b"NSString") + 1
 
-    while p < len(data) and data[p] in (0x84, 0x94, 0x85, 0x95, 0x01, 0x86):
-        p += 1
-
-    if p + 8 < len(data) and data[p : p + 8] == b"NSObject":
-        p += 8
-        while p < len(data) and data[p] in (0x84, 0x94, 0x85, 0x95, 0x01, 0x86):
-            p += 1
-
-    if p < len(data) and data[p] == 0x2B:
-        p += 1
-
-    if p >= len(data):
-        return _attributed_fail(data, "EOF before length byte")
-
-    b0 = data[p]
-    if b0 == 0x81:
-        if p + 3 > len(data):
-            return _attributed_fail(data, "truncated <H length")
-        length = struct.unpack("<H", data[p + 1 : p + 3])[0]
-        p += 3
-    elif b0 == 0x82:
-        if p + 5 > len(data):
-            return _attributed_fail(data, "truncated <I length")
-        length = struct.unpack("<I", data[p + 1 : p + 5])[0]
-        p += 5
-    elif b0 < 0x80:
-        length = b0
-        p += 1
-    else:
-        p += 1
-        if p >= len(data):
-            return _attributed_fail(data, "EOF in nested length")
-        b0 = data[p]
-        if b0 == 0x81:
-            if p + 3 > len(data):
-                return _attributed_fail(data, "truncated nested <H length")
-            length = struct.unpack("<H", data[p + 1 : p + 3])[0]
-            p += 3
-        elif b0 < 0x80:
-            length = b0
-            p += 1
+    candidates: list[str] = []
+    expected_next: int | None = None
+    search_from = 0
+    while True:
+        idx = data.find(b"NSString", search_from)
+        if idx == -1:
+            break
+        parsed = _attributed_string_at(data, idx)
+        if parsed is not None:
+            text, end = parsed
+            if expected_next is not None and idx > expected_next:
+                break
+            if text:
+                candidates.append(text)
+            expected_next = end
+            search_from = max(idx + 1, end)
         else:
-            return _attributed_fail(data, f"unrecognized nested length byte {b0:#x}")
+            search_from = idx + len(b"NSString")
 
-    if length <= 0 or p + length > len(data):
-        return _attributed_fail(data, f"length {length} exceeds data at p={p}")
-
-    try:
-        return data[p : p + length].decode("utf-8")
-    except Exception as e:
-        return _attributed_fail(data, f"utf-8 decode failed: {e}")
+    if not candidates:
+        return _attributed_fail(data, "no decodable NSString payload")
+    if len(candidates) == 1:
+        return candidates[0]
+    return "".join(candidates)
 
 
 # ---------------------------------------------------------------------------
