@@ -576,6 +576,44 @@ print("OK")
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertIn("OK", completed.stdout)
 
+    def test_product_mode_default_policy_dir_blocks_preview(self) -> None:
+        """Product mode enforces the default contacts/send_policy.json path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bridge = Path(os.path.realpath(tmpdir))
+            policy_dir = bridge / "contacts"
+            policy_dir.mkdir(mode=0o700)
+            policy_file = policy_dir / "send_policy.json"
+            policy_file.write_text(json.dumps({"schema": 1, "enabled": False, "acknowledged_at": None}))
+            policy_file.chmod(0o600)
+
+            script = f"""
+import os
+import sys
+os.environ["IMESSAGE_BRIDGE_DIR"] = "{bridge}"
+os.environ["IMESSAGE_PRODUCT_ID"] = "grokbot-imessage"
+sys.path.insert(0, "tests")
+from _helper_loader import helper
+try:
+    helper.action_send_preview({{"to": "+14155551234", "text": "hello"}}, None, {{}}, [])
+    print("ERROR: should have raised")
+    sys.exit(1)
+except ValueError as e:
+    if "disabled by policy" in str(e):
+        print("OK")
+    else:
+        print(f"ERROR: wrong error: {{e}}")
+        sys.exit(1)
+"""
+            completed = subprocess.run(
+                [sys.executable, "-c", script],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("OK", completed.stdout)
+
 
 class ManagerModeTests(unittest.TestCase):
     """Test manager mode special cases (CORE-5b)."""

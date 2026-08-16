@@ -815,7 +815,7 @@ def load_blocklist() -> list[str]:
 
 def is_send_policy_enabled() -> bool:
     """Check if send_policy.json enables sending. Product mode only; DIY always returns True."""
-    if "IMESSAGE_POLICY_DIR" not in os.environ:
+    if WRAPPER_MODE != "product":
         return True
     try:
         metadata = SEND_POLICY_PATH.lstat()
