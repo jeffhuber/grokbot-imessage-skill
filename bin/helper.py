@@ -59,22 +59,37 @@ if not _bridge_root_value:
 BRIDGE_ROOT = Path(
     os.path.abspath(os.path.expanduser(_bridge_root_value))
 )
+POLICY_ROOT = Path(
+    os.path.abspath(
+        os.path.expanduser(
+            os.environ.get("IMESSAGE_POLICY_DIR")
+            or str(BRIDGE_ROOT / "contacts")
+        )
+    )
+)
 REQUESTS_DIR = BRIDGE_ROOT / "control" / "requests"
 RESPONSES_DIR = BRIDGE_ROOT / "control" / "responses"
 LOG_PATH = BRIDGE_ROOT / "control" / "log.txt"
-BLOCKLIST_PATH = BRIDGE_ROOT / "contacts" / "blocked_chats.txt"
+BLOCKLIST_PATH = POLICY_ROOT / "blocked_chats.txt"
 ALLOWLIST_PATH = Path(
     os.path.abspath(
         os.path.expanduser(
             os.environ.get("COWORK_IMESSAGE_READ_ALLOWLIST")
             or str(
-                BRIDGE_ROOT / "contacts" / "allowed_chats.txt"
+                POLICY_ROOT / "allowed_chats.txt"
             )
         )
     )
 )
-READ_POLICY_PATH = BRIDGE_ROOT / "contacts" / "read_policy.txt"
-CONFIRM_HELPER_PATH = CODE_ROOT / "bin" / "grokbot-imessage-confirm"
+READ_POLICY_PATH = POLICY_ROOT / "read_policy.txt"
+CONFIRM_HELPER_PATH = Path(
+    os.path.abspath(
+        os.path.expanduser(
+            os.environ.get("IMESSAGE_CONFIRM_HELPER_PATH")
+            or str(CODE_ROOT / "bin" / "grokbot-imessage-confirm")
+        )
+    )
+)
 CHAT_DB_PATH = Path.home() / "Library" / "Messages" / "chat.db"
 HOST_DISPLAY_NAME = os.environ.get("IMESSAGE_HOST_DISPLAY_NAME", "Grok Bot")
 
