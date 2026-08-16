@@ -296,13 +296,9 @@ static int validate_code_requirement(const char *path, const char *label,
 
     SecCSFlags flags =
         kSecCSStrictValidate | kSecCSCheckAllArchitectures | kSecCSNoNetworkAccess;
-#ifdef IMESSAGE_CHECK_NESTED_CODE
     if (check_nested) {
         flags |= kSecCSCheckNestedCode;
     }
-#else
-    (void)check_nested;
-#endif
 
     CFErrorRef error = NULL;
     status = SecStaticCodeCheckValidityWithErrors(code, flags, requirement, &error);
@@ -644,7 +640,7 @@ int main(int argc, char **argv) {
     if (ret != 0) return ret;
 
     ret = validate_code_requirement(bundle_path, "app bundle", IMESSAGE_BUNDLE_ID,
-                                    IMESSAGE_BUNDLE_REQUIREMENT, true, false);
+                                    IMESSAGE_BUNDLE_REQUIREMENT, true, true);
     if (ret != 0) return ret;
 
     ret = validate_code_requirement(confirm_helper, "confirm helper",
