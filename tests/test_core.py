@@ -150,6 +150,128 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(helper.redact(text), text)
 
 
+class ProductModeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="product-mode-test-")
+        self.addCleanup(self._tmp.cleanup)
+        self._saved_env = {}
+        for var in ("IMESSAGE_PRODUCT_ID", "IMESSAGE_POLICY_DIR", "IMESSAGE_SEND_GATE_PATH",
+                    "IMESSAGE_CONFIRM_HELPER_PATH", "COWORK_IMESSAGE_READ_POLICY"):
+            self._saved_env[var] = os.environ.get(var)
+        self.addCleanup(self._restore_env)
+
+    def _restore_env(self) -> None:
+        for var, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = value
+
+    def test_missing_read_policy_defaults_to_allowlist_in_product_mode(self) -> None:
+        """Verify that product mode defaults to allowlist when read_policy.txt is missing."""
+        policy_dir = Path(self._tmp.name)
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        
+        old_wrapper_mode = helper.WRAPPER_MODE
+        old_policy_root = helper.POLICY_ROOT
+        old_read_policy_path = helper.READ_POLICY_PATH
+        
+        try:
+            helper.WRAPPER_MODE = "product"
+            helper.POLICY_ROOT = policy_dir
+            helper.READ_POLICY_PATH = policy_dir / "read_policy.txt"
+            
+            policy = helper.load_privacy_policy()
+            self.assertEqual(policy.mode, "allowlist")
+        finally:
+            helper.WRAPPER_MODE = old_wrapper_mode
+            helper.POLICY_ROOT = old_policy_root
+            helper.READ_POLICY_PATH = old_read_policy_path
+
+    def test_missing_read_policy_defaults_to_blocklist_in_baked_mode(self) -> None:
+        """Verify that baked mode defaults to blocklist when read_policy.txt is missing."""
+        policy_dir = Path(self._tmp.name)
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        
+        old_wrapper_mode = helper.WRAPPER_MODE
+        old_policy_root = helper.POLICY_ROOT
+        old_read_policy_path = helper.READ_POLICY_PATH
+        
+        try:
+            helper.WRAPPER_MODE = "baked"
+            helper.POLICY_ROOT = policy_dir
+            helper.READ_POLICY_PATH = policy_dir / "read_policy.txt"
+            
+            policy = helper.load_privacy_policy()
+            self.assertEqual(policy.mode, "blocklist")
+        finally:
+            helper.WRAPPER_MODE = old_wrapper_mode
+            helper.POLICY_ROOT = old_policy_root
+            helper.READ_POLICY_PATH = old_read_policy_path
+
+    def test_policy_file_permission_rejection_in_product_mode(self) -> None:
+        """Verify that policy files with bad permissions are rejected in product mode."""
+        policy_dir = Path(self._tmp.name)
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        
+        blocked_file = policy_dir / "blocked_chats.txt"
+        blocked_file.write_text("+14155551234\n")
+        blocked_file.chmod(0o664)
+        
+        old_wrapper_mode = helper.WRAPPER_MODE
+        old_blocklist_path = helper.BLOCKLIST_PATH
+        
+        try:
+            helper.WRAPPER_MODE = "product"
+            helper.BLOCKLIST_PATH = blocked_file
+            
+            with mock.patch.object(helper, "log") as mock_log:
+                policy = helper.load_privacy_policy()
+                self.assertEqual(len(policy.blocklist), 0)
+                
+                logged = " ".join(str(call.args[0]) for call in mock_log.call_args_list)
+                self.assertIn("group/world-writable", logged)
+        finally:
+            helper.WRAPPER_MODE = old_wrapper_mode
+            helper.BLOCKLIST_PATH = old_blocklist_path
+
+    def test_policy_file_accepts_correct_permissions_in_product_mode(self) -> None:
+        """Verify that policy files with correct permissions are loaded in product mode."""
+        policy_dir = Path(self._tmp.name)
+        policy_dir.mkdir(parents=True, exist_ok=True)
+        
+        allowed_file = policy_dir / "allowed_chats.txt"
+        allowed_file.write_text("+14155551234\n")
+        allowed_file.chmod(0o600)
+        
+        old_wrapper_mode = helper.WRAPPER_MODE
+        old_allowlist_path = helper.ALLOWLIST_PATH
+        
+        try:
+            helper.WRAPPER_MODE = "product"
+            helper.ALLOWLIST_PATH = allowed_file
+            
+            policy = helper.load_privacy_policy()
+            self.assertEqual(len(policy.allowlist), 1)
+        finally:
+            helper.WRAPPER_MODE = old_wrapper_mode
+            helper.ALLOWLIST_PATH = old_allowlist_path
+
+    def test_action_status_includes_product_fields(self) -> None:
+        """Verify that action_status returns the new product fields."""
+        status = helper.action_status({}, None, {}, helper.load_privacy_policy())
+        
+        self.assertIn("product_id", status)
+        self.assertIn("wrapper_mode", status)
+        self.assertIn("policy_dir", status)
+        
+        self.assertIsInstance(status["product_id"], str)
+        self.assertIsInstance(status["wrapper_mode"], str)
+        self.assertIsInstance(status["policy_dir"], str)
+        
+        self.assertIn(status["wrapper_mode"], ("product", "baked"))
+
+
 class SendGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="grokbot-nonce-test-")
