@@ -4,6 +4,12 @@
  * FDA-bearing launcher for the Python worker. Installers bake in every trusted
  * code path and the separate runtime bridge path. The hardened installer sets
  * EXPECTED_CODE_UID=0 and REQUIRE_ROOT_POLICY=1.
+ *
+ * Dual-mode build:
+ * - Baked mode (default): Compile with -DHELPER_SCRIPT, -DSEND_GATE_SCRIPT,
+ *   -DCONFIRM_HELPER, -DBRIDGE_ROOT. Paths are baked at compile time.
+ * - Product mode: Compile with -DIMESSAGE_PRODUCT_BUILD=1. Paths resolved
+ *   at runtime via --product <id> CLI. Requires product allowlist match.
  */
 
 #include <errno.h>
@@ -17,20 +23,27 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#ifndef HELPER_SCRIPT
-#error "HELPER_SCRIPT must be defined at build time"
-#endif
+#ifdef IMESSAGE_PRODUCT_BUILD
+    #if defined(HELPER_SCRIPT) || defined(SEND_GATE_SCRIPT) || \
+        defined(CONFIRM_HELPER) || defined(BRIDGE_ROOT)
+        #error "Product build mode (-DIMESSAGE_PRODUCT_BUILD) and baked path macros are mutually exclusive"
+    #endif
+#else
+    #ifndef HELPER_SCRIPT
+    #error "HELPER_SCRIPT must be defined at build time"
+    #endif
 
-#ifndef SEND_GATE_SCRIPT
-#error "SEND_GATE_SCRIPT must be defined at build time"
-#endif
+    #ifndef SEND_GATE_SCRIPT
+    #error "SEND_GATE_SCRIPT must be defined at build time"
+    #endif
 
-#ifndef CONFIRM_HELPER
-#error "CONFIRM_HELPER must be defined at build time"
-#endif
+    #ifndef CONFIRM_HELPER
+    #error "CONFIRM_HELPER must be defined at build time"
+    #endif
 
-#ifndef BRIDGE_ROOT
-#error "BRIDGE_ROOT must be defined at build time"
+    #ifndef BRIDGE_ROOT
+    #error "BRIDGE_ROOT must be defined at build time"
+    #endif
 #endif
 
 #ifndef PYTHON_INTERPRETER
@@ -63,6 +76,44 @@
 
 extern char **environ;
 
+#ifdef IMESSAGE_PRODUCT_BUILD
+typedef struct {
+    const char *product_id;
+    const char *host_display_name;
+    const char *role;
+} product_entry;
+
+static const product_entry product_allowlist[] = {
+    {"claude", "Claude", "host"},
+    {"grok", "Grok", "host"},
+    {"openai", "ChatGPT", "host"},
+    {"manager", "Manager", "manager"},
+};
+
+static const size_t product_allowlist_size = 
+    sizeof(product_allowlist) / sizeof(product_allowlist[0]);
+
+static const product_entry *find_product(const char *product_id) {
+    if (!product_id) {
+        return NULL;
+    }
+    for (size_t i = 0; i < product_allowlist_size; i++) {
+        if (strcmp(product_id, product_allowlist[i].product_id) == 0) {
+            return &product_allowlist[i];
+        }
+    }
+    return NULL;
+}
+
+static bool is_path_like(const char *str) {
+    return str && (strchr(str, '/') != NULL || strcmp(str, ".") == 0 || 
+                   strcmp(str, "..") == 0);
+}
+
+static void print_usage(const char *display_name) {
+    fprintf(stderr, "Usage: %s --product <id> [--validate-only]\n", display_name);
+}
+#else
 static int validate_file(const char *path, const char *label, uid_t owner,
                          bool require_executable) {
     struct stat st;
@@ -108,8 +159,55 @@ static int set_env_value(char *buffer, size_t size, const char *name,
     }
     return 0;
 }
+#endif
 
 int main(int argc, char **argv) {
+#ifdef IMESSAGE_PRODUCT_BUILD
+    const char *product_id = NULL;
+    bool validate_only = false;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--product") == 0) {
+            if (i + 1 >= argc) {
+                print_usage(HELPER_DISPLAY_NAME);
+                return 8;
+            }
+            product_id = argv[++i];
+        } else if (strcmp(argv[i], "--validate-only") == 0) {
+            validate_only = true;
+        } else {
+            print_usage(HELPER_DISPLAY_NAME);
+            return 8;
+        }
+    }
+
+    if (!product_id) {
+        print_usage(HELPER_DISPLAY_NAME);
+        return 8;
+    }
+
+    if (is_path_like(product_id)) {
+        print_usage(HELPER_DISPLAY_NAME);
+        return 8;
+    }
+
+    const product_entry *entry = find_product(product_id);
+    if (!entry) {
+        print_usage(HELPER_DISPLAY_NAME);
+        return 8;
+    }
+
+    if (validate_only) {
+        printf("{\"product\":\"%s\",\"role\":\"%s\",\"validate_only\":true}\n",
+               entry->product_id, entry->role);
+        return 0;
+    }
+
+    fprintf(stderr, "%s: product mode path derivation not yet implemented\n",
+            HELPER_DISPLAY_NAME);
+    return 1;
+
+#else
     (void)argc;
     (void)argv;
 
@@ -198,4 +296,5 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s: execv %s failed: %s\n", HELPER_DISPLAY_NAME,
             PYTHON_INTERPRETER, strerror(errno));
     return 1;
+#endif
 }
