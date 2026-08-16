@@ -42,6 +42,7 @@ print(module.ALLOWLIST_PATH)
 """
             env = os.environ.copy()
             env["IMESSAGE_BRIDGE_DIR"] = str(bridge)
+            env["COWORK_IMESSAGE_BRIDGE_DIR"] = str(bridge)
             env["COWORK_IMESSAGE_READ_ALLOWLIST"] = ""
             result = subprocess.run(
                 [sys.executable, "-c", probe, str(REPO_ROOT / "bin" / "helper.py")],
@@ -194,37 +195,71 @@ class WrapperValidationTests(unittest.TestCase):
             self.assertNotIn(raw_target, source)
 
     @unittest.skipUnless(sys.platform == "darwin", "product bundle runtime is macOS-only")
+    @unittest.skipUnless(shutil.which("codesign"), "codesign is required")
     def test_product_validate_only_escapes_json_paths(self) -> None:
         with tempfile.TemporaryDirectory(prefix="grokbot-json-path-test-") as td:
             root = Path(td)
             bundle = root / 'Test "Bridge\\App.app'
+            macos = bundle / "Contents" / "MacOS"
             helpers = bundle / "Contents" / "Helpers"
             core_bin = bundle / "Contents" / "Resources" / "core" / "bin"
-            python_bin = (
-                bundle
-                / "Contents"
-                / "Frameworks"
-                / "Python.framework"
-                / "Resources"
-                / "Python.app"
-                / "Contents"
-                / "MacOS"
-            )
+            framework = bundle / "Contents" / "Frameworks" / "Python.framework"
+            python_bin = framework / "Versions" / "A"
+            framework_resources = python_bin / "Resources"
+            macos.mkdir(parents=True)
             helpers.mkdir(parents=True)
             core_bin.mkdir(parents=True)
-            python_bin.mkdir(parents=True)
+            framework_resources.mkdir(parents=True)
             (bundle / "Contents" / "Info.plist").write_text(
-                "<plist><dict></dict></plist>"
+                "<plist><dict>"
+                "<key>CFBundleExecutable</key><string>TestApp</string>"
+                "<key>CFBundleIdentifier</key><string>com.test.bridgepro</string>"
+                "</dict></plist>"
             )
             (core_bin / "helper.py").write_text("# helper\n")
             (core_bin / "send_gate.py").write_text("# send gate\n")
             confirmation = helpers / "imessage-confirm"
             python = python_bin / "Python"
-            confirmation.write_text("#!/bin/sh\nexit 0\n")
-            python.write_text("#!/bin/sh\nexit 0\n")
-            confirmation.chmod(0o700)
-            python.chmod(0o700)
             wrapper = helpers / "test-helper"
+            app_source = root / "test_app.c"
+            confirm_source = root / "confirm.c"
+            python_source = root / "python.c"
+            app_source.write_text("int main(void) { return 0; }\n")
+            confirm_source.write_text("int main(void) { return 0; }\n")
+            python_source.write_text("int main(void) { return 0; }\n")
+            for output, source in (
+                (macos / "TestApp", app_source),
+                (confirmation, confirm_source),
+                (python, python_source),
+            ):
+                compiled = subprocess.run(
+                    ["clang", "-Wall", "-Wextra", "-Werror", "-O2", "-o", str(output), str(source)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            (framework_resources / "Info.plist").write_text(
+                "<plist><dict>"
+                "<key>CFBundleExecutable</key><string>Python</string>"
+                "<key>CFBundleIdentifier</key><string>org.python.python</string>"
+                "<key>CFBundlePackageType</key><string>FMWK</string>"
+                "</dict></plist>"
+            )
+            (framework / "Versions" / "Current").symlink_to("A")
+            (framework / "Python").symlink_to("Versions/Current/Python")
+            (framework / "Resources").symlink_to("Versions/Current/Resources")
+            for target, identifier in (
+                (framework, "org.python.python"),
+                (confirmation, "com.test.bridgepro.confirm"),
+            ):
+                signed = subprocess.run(
+                    ["codesign", "--force", "--sign", "-", "--identifier", identifier, str(target)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(signed.returncode, 0, signed.stderr)
 
             compile_result = subprocess.run(
                 [
@@ -235,17 +270,35 @@ class WrapperValidationTests(unittest.TestCase):
                     "-O2",
                     "-DIMESSAGE_PRODUCT_BUILD=1",
                     '-DAPP_SUPPORT_DIRNAME="TestBridgePro"',
-                    '-DPYTHON_RELPATH="Resources/Python.app/Contents/MacOS/Python"',
+                    '-DPYTHON_RELPATH="Versions/A/Python"',
+                    '-DIMESSAGE_BUNDLE_ID="com.test.bridgepro"',
+                    '-DIMESSAGE_CONFIRM_BUNDLE_ID="com.test.bridgepro.confirm"',
+                    '-DIMESSAGE_PYTHON_BUNDLE_ID="org.python.python"',
+                    '-DIMESSAGE_TEAM_ID="TESTTEAMID"',
+                    '-DIMESSAGE_BUNDLE_REQUIREMENT="identifier \\"com.test.bridgepro\\""',
+                    '-DIMESSAGE_CONFIRM_REQUIREMENT="identifier \\"com.test.bridgepro.confirm\\""',
+                    '-DIMESSAGE_PYTHON_REQUIREMENT="identifier \\"org.python.python\\""',
                     '-DHELPER_DISPLAY_NAME="test-helper"',
                     "-o",
                     str(wrapper),
                     str(REPO_ROOT / "bin" / "imessage_helper.c"),
+                    "-framework",
+                    "Security",
+                    "-framework",
+                    "CoreFoundation",
                 ],
                 capture_output=True,
                 text=True,
                 check=False,
             )
             self.assertEqual(compile_result.returncode, 0, compile_result.stderr)
+            signed = subprocess.run(
+                ["codesign", "--force", "--sign", "-", "--identifier", "com.test.bridgepro", str(bundle)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(signed.returncode, 0, signed.stderr)
 
             result = subprocess.run(
                 [str(wrapper), "--product", "openai", "--validate-only"],
@@ -272,6 +325,7 @@ class WrapperValidationTests(unittest.TestCase):
             helper_script.write_text(
                 "import os\n"
                 "print(os.environ['IMESSAGE_BRIDGE_DIR'])\n"
+                "print(os.environ['COWORK_IMESSAGE_BRIDGE_DIR'])\n"
                 "print(os.environ['COWORK_IMESSAGE_READ_ALLOWLIST'])\n"
             )
             send_gate.write_text("# trusted fixture\n")
@@ -307,8 +361,9 @@ class WrapperValidationTests(unittest.TestCase):
             self.assertEqual(
                 healthy.stdout.splitlines(),
                 [
-                    str(root / "bridge"),
-                    str(root / "bridge" / "contacts" / "allowed_chats.txt"),
+                    str(root / "bridge"),  # IMESSAGE_BRIDGE_DIR
+                    str(root / "bridge"),  # COWORK_IMESSAGE_BRIDGE_DIR
+                    str(root / "bridge" / "contacts" / "allowed_chats.txt"),  # COWORK_IMESSAGE_READ_ALLOWLIST
                 ],
             )
 
