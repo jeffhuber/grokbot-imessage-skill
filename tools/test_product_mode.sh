@@ -109,8 +109,21 @@ fi
 echo "✓ Duplicate --product rejected with exit 8"
 echo
 
-# Test 9: Validate-only for all product IDs
-echo "Test 9: Validate-only for all product IDs"
+# Test 9: Product mode rejects duplicate --validate-only arguments
+echo "Test 9: Reject duplicate --validate-only arguments"
+set +e
+/tmp/test-product-helper --product openai --validate-only --validate-only 2>/dev/null
+exit_code=$?
+set -e
+if [ $exit_code -ne 8 ]; then
+  echo "✗ FAIL: Duplicate --validate-only should exit 8, got $exit_code"
+  exit 1
+fi
+echo "✓ Duplicate --validate-only rejected with exit 8"
+echo
+
+# Test 10: Validate-only for all product IDs
+echo "Test 10: Validate-only for all product IDs"
 for id in claude grok openai manager; do
   output=$(/tmp/test-product-helper --product "$id" --validate-only)
   if [ $? -ne 0 ]; then
@@ -130,8 +143,8 @@ done
 echo "✓ All product IDs validate correctly"
 echo
 
-# Test 10: Product mode without --validate-only returns exit 1
-echo "Test 10: Product mode exec stub returns exit 1"
+# Test 11: Product mode without --validate-only returns exit 1
+echo "Test 11: Product mode exec stub returns exit 1"
 set +e
 /tmp/test-product-helper --product openai 2>/dev/null
 exit_code=$?

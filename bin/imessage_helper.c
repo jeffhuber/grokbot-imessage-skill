@@ -174,6 +174,10 @@ int main(int argc, char **argv) {
             }
             product_id = argv[++i];
         } else if (strcmp(argv[i], "--validate-only") == 0) {
+            if (validate_only) {
+                print_usage(HELPER_DISPLAY_NAME);
+                return 8;
+            }
             validate_only = true;
         } else {
             print_usage(HELPER_DISPLAY_NAME);
