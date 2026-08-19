@@ -137,10 +137,10 @@ typedef struct {
 } product_entry;
 
 static const product_entry product_allowlist[] = {
-    {"claude", "Message Bridge", "host"},
-    {"grok", "Message Bridge", "host"},
-    {"openai", "Message Bridge", "host"},
-    {"manager", "Message Bridge", "manager"},
+    {"claude", "Claude", "host"},
+    {"grok", "Grok", "host"},
+    {"openai", "ChatGPT", "host"},
+    {"manager", "Manager", "manager"},
 };
 
 static const size_t product_allowlist_size =
