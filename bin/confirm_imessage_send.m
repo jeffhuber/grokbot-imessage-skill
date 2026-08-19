@@ -54,6 +54,18 @@ int main(void) {
 
         NSAlert *alert = [[NSAlert alloc] init];
         alert.alertStyle = NSAlertStyleWarning;
+        // Product mode: the wrapper exports the host app's icon path
+        // (IMESSAGE_HOST_ICON_PATH). This helper lives outside Contents/MacOS,
+        // so without it the alert shows the generic process icon. Baked mode
+        // leaves the variable unset and keeps the default.
+        const char *iconPath = getenv("IMESSAGE_HOST_ICON_PATH");
+        if (iconPath != NULL && iconPath[0] == '/') {
+            NSImage *hostIcon = [[NSImage alloc]
+                initWithContentsOfFile:[NSString stringWithUTF8String:iconPath]];
+            if (hostIcon != nil && hostIcon.isValid) {
+                alert.icon = hostIcon;
+            }
+        }
         alert.messageText = [NSString stringWithFormat:
             @"Confirm %@ %@ Send", clientName, service];
         NSString *displayRecipient = resolvedName.length > 0

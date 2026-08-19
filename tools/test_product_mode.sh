@@ -377,6 +377,10 @@ if ! echo "$output" | grep -q "\"python_interp\":\".*Python.framework/Versions/A
   echo "✗ FAIL: python_interp path not resolved correctly"
   exit 1
 fi
+if ! echo "$output" | grep -q "\"host_icon\":\".*TestApp.app/Contents/Resources/AppIcon.icns\""; then
+  echo "✗ FAIL: host_icon path not resolved correctly"
+  exit 1
+fi
 echo "✓ Bundle-relative paths resolved correctly"
 echo
 

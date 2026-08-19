@@ -29,12 +29,12 @@
     {
       "logical_name": "imessage_helper.c",
       "path": "bin/imessage_helper.c",
-      "sha256": "90c0dd59ad4f233fb3e4db964f1d0b392249748ce0bfe361794a1a597a75980f"
+      "sha256": "4fe10da1f0770e7e33a2224e042b891a5715531cbdb75e827570b7863b398f4b"
     },
     {
       "logical_name": "confirm_imessage_send.m",
       "path": "bin/confirm_imessage_send.m",
-      "sha256": "377fc6bbeeaf45c945f7ba54c4ac911f8f2e83ace42d4ee8ee805a5c4612f894"
+      "sha256": "a7ec5c273623b974450c69558e2f8eb4ae0bcaffd93510108d1d97f03f0f4a12"
     }
   ]
 }

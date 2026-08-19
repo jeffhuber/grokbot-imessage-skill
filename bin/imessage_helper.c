@@ -621,6 +621,14 @@ int main(int argc, char **argv) {
                       "%s/Contents/Helpers/imessage-confirm", bundle_path);
     if (ret != 0) return ret;
 
+    /* Host app icon for the native confirmation alert: a helper outside
+     * Contents/MacOS has no bundle icon of its own, so the confirm helper is
+     * told where the product's icon lives. Optional at runtime. */
+    char host_icon[PATH_MAX];
+    ret = format_path(host_icon, sizeof(host_icon), "host icon",
+                      "%s/Contents/Resources/AppIcon.icns", bundle_path);
+    if (ret != 0) return ret;
+
     char python_interp[PATH_MAX];
     ret = format_path(python_interp, sizeof(python_interp), "Python interpreter",
                       "%s/Contents/Frameworks/Python.framework/%s",
@@ -671,6 +679,8 @@ int main(int argc, char **argv) {
         putchar(',');
         print_json_field("confirm_helper", confirm_helper);
         putchar(',');
+        print_json_field("host_icon", host_icon);
+        putchar(',');
         print_json_field("python_interp", python_interp);
         puts("}");
         return 0;
@@ -702,6 +712,7 @@ int main(int argc, char **argv) {
     static char env_confirm_path[PATH_MAX + 64];
     static char env_send_gate_path[PATH_MAX + 64];
     static char env_host_display[128];
+    static char env_host_icon[PATH_MAX + 48];
 
     if (set_env_value(env_home, sizeof(env_home), "HOME", pw->pw_dir) != 0 ||
         set_env_value(env_tmpdir, sizeof(env_tmpdir), "TMPDIR", tmpdir) != 0 ||
@@ -716,7 +727,9 @@ int main(int argc, char **argv) {
         set_env_value(env_send_gate_path, sizeof(env_send_gate_path),
                       "IMESSAGE_SEND_GATE_PATH", send_gate_py) != 0 ||
         set_env_value(env_host_display, sizeof(env_host_display),
-                      "IMESSAGE_HOST_DISPLAY_NAME", entry->host_display_name) != 0) {
+                      "IMESSAGE_HOST_DISPLAY_NAME", entry->host_display_name) != 0 ||
+        set_env_value(env_host_icon, sizeof(env_host_icon),
+                      "IMESSAGE_HOST_ICON_PATH", host_icon) != 0) {
         return 7;
     }
 
@@ -737,6 +750,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
+        env_host_icon,
         NULL,
     };
 
@@ -751,6 +765,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
+        env_host_icon,
         NULL,
     };
 
