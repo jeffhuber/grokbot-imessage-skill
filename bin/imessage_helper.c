@@ -644,6 +644,9 @@ int main(int argc, char **argv) {
     ret = validate_ownership(confirm_helper, "confirm helper", current_uid, bundle_owner, true, true);
     if (ret != 0) return ret;
 
+    ret = validate_ownership(host_icon, "host icon", current_uid, bundle_owner, true, false);
+    if (ret != 0) return ret;
+
     ret = validate_ownership(python_interp, "Python interpreter", current_uid, bundle_owner, true, true);
     if (ret != 0) return ret;
 

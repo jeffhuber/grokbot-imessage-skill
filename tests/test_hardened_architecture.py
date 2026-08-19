@@ -216,6 +216,7 @@ class WrapperValidationTests(unittest.TestCase):
                 "<key>CFBundleIdentifier</key><string>com.test.bridgepro</string>"
                 "</dict></plist>"
             )
+            (bundle / "Contents" / "Resources" / "AppIcon.icns").write_text("test icon\n")
             (core_bin / "helper.py").write_text("# helper\n")
             (core_bin / "send_gate.py").write_text("# send gate\n")
             confirmation = helpers / "imessage-confirm"
