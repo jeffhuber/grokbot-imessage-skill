@@ -750,6 +750,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
+        env_host_icon,
         NULL,
     };
 
@@ -764,6 +765,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
+        env_host_icon,
         NULL,
     };
 
