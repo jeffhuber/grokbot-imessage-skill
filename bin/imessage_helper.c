@@ -628,6 +628,17 @@ int main(int argc, char **argv) {
     ret = format_path(host_icon, sizeof(host_icon), "host icon",
                       "%s/Contents/Resources/AppIcon.icns", bundle_path);
     if (ret != 0) return ret;
+    struct stat host_icon_st;
+    bool host_icon_available = true;
+    if (lstat(host_icon, &host_icon_st) != 0) {
+        if (errno == ENOENT) {
+            host_icon_available = false;
+        } else {
+            fprintf(stderr, "%s: cannot inspect host icon at %s (%s)\n",
+                    HELPER_DISPLAY_NAME, host_icon, strerror(errno));
+            return 2;
+        }
+    }
 
     char python_interp[PATH_MAX];
     ret = format_path(python_interp, sizeof(python_interp), "Python interpreter",
@@ -644,8 +655,10 @@ int main(int argc, char **argv) {
     ret = validate_ownership(confirm_helper, "confirm helper", current_uid, bundle_owner, true, true);
     if (ret != 0) return ret;
 
-    ret = validate_ownership(host_icon, "host icon", current_uid, bundle_owner, true, false);
-    if (ret != 0) return ret;
+    if (host_icon_available) {
+        ret = validate_ownership(host_icon, "host icon", current_uid, bundle_owner, true, false);
+        if (ret != 0) return ret;
+    }
 
     ret = validate_ownership(python_interp, "Python interpreter", current_uid, bundle_owner, true, true);
     if (ret != 0) return ret;
@@ -730,7 +743,11 @@ int main(int argc, char **argv) {
         set_env_value(env_send_gate_path, sizeof(env_send_gate_path),
                       "IMESSAGE_SEND_GATE_PATH", send_gate_py) != 0 ||
         set_env_value(env_host_display, sizeof(env_host_display),
-                      "IMESSAGE_HOST_DISPLAY_NAME", entry->host_display_name) != 0 ||
+                      "IMESSAGE_HOST_DISPLAY_NAME", entry->host_display_name) != 0) {
+        return 7;
+    }
+
+    if (host_icon_available &&
         set_env_value(env_host_icon, sizeof(env_host_icon),
                       "IMESSAGE_HOST_ICON_PATH", host_icon) != 0) {
         return 7;
@@ -753,7 +770,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
-        env_host_icon,
+        NULL,
         NULL,
     };
 
@@ -768,9 +785,14 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
-        env_host_icon,
+        NULL,
         NULL,
     };
+
+    if (host_icon_available) {
+        new_env_host[(sizeof(new_env_host) / sizeof(new_env_host[0])) - 2] = env_host_icon;
+        new_env_manager[(sizeof(new_env_manager) / sizeof(new_env_manager[0])) - 2] = env_host_icon;
+    }
 
     environ = is_host ? new_env_host : new_env_manager;
 
