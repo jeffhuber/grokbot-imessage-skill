@@ -277,6 +277,8 @@ clang -Wall -Wextra -Werror -O2 -o "$BUNDLE_PATH/Contents/MacOS/TestApp" "$TEMP_
 
 touch "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
 touch "$BUNDLE_PATH/Contents/Resources/core/bin/send_gate.py"
+printf "test icon" > "$BUNDLE_PATH/Contents/Resources/AppIcon.icns"
+chmod 644 "$BUNDLE_PATH/Contents/Resources/AppIcon.icns"
 cat > "$TEMP_DIR/python.c" <<'C'
 int main(void) { return 0; }
 C
@@ -384,8 +386,21 @@ fi
 echo "✓ Bundle-relative paths resolved correctly"
 echo
 
-# Test 15: Validation rejects non-executable interpreter
-echo "Test 15: Product validate-only rejects non-executable Python"
+# Test 15: Product validate-only tolerates bundles without an icon
+echo "Test 15: Product validate-only tolerates missing host icon"
+mv "$BUNDLE_PATH/Contents/Resources/AppIcon.icns" "$BUNDLE_PATH/Contents/Resources/AppIcon.icns.missing"
+codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
+if ! "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null; then
+  echo "✗ FAIL: Missing optional host icon should not block validate-only"
+  exit 1
+fi
+mv "$BUNDLE_PATH/Contents/Resources/AppIcon.icns.missing" "$BUNDLE_PATH/Contents/Resources/AppIcon.icns"
+codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
+echo "✓ Missing optional host icon tolerated"
+echo
+
+# Test 16: Validation rejects non-executable interpreter
+echo "Test 16: Product validate-only rejects non-executable Python"
 chmod 600 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
@@ -399,8 +414,8 @@ chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 echo "✓ Non-executable Python rejected with exit 6"
 echo
 
-# Test 16: Validation rejects executables the current user cannot run
-echo "Test 16: Product validate-only rejects inaccessible execute bits"
+# Test 17: Validation rejects executables the current user cannot run
+echo "Test 17: Product validate-only rejects inaccessible execute bits"
 chmod 001 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
@@ -414,8 +429,23 @@ chmod 700 "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 echo "✓ Inaccessible execute bit rejected with exit 6"
 echo
 
-# Test 17: Product validate-only rejects bundle seal tampering
-echo "Test 17: Product validate-only rejects bundle seal tampering"
+# Test 18: Product validate-only rejects writable host icons
+echo "Test 18: Product validate-only rejects writable host icon"
+chmod 666 "$BUNDLE_PATH/Contents/Resources/AppIcon.icns"
+set +e
+"$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
+exit_code=$?
+set -e
+if [ $exit_code -ne 5 ]; then
+  echo "✗ FAIL: Writable host icon should exit 5, got $exit_code"
+  exit 1
+fi
+chmod 644 "$BUNDLE_PATH/Contents/Resources/AppIcon.icns"
+echo "✓ Writable host icon rejected with exit 5"
+echo
+
+# Test 19: Product validate-only rejects bundle seal tampering
+echo "Test 19: Product validate-only rejects bundle seal tampering"
 echo "# tampered" >> "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product claude --validate-only >/dev/null 2>&1
@@ -432,7 +462,7 @@ echo
 printf "" > "$BUNDLE_PATH/Contents/Resources/core/bin/helper.py"
 codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
 
-echo "Test 18: Product validate-only rejects Python interpreter tampering"
+echo "Test 20: Product validate-only rejects Python interpreter tampering"
 printf "tamper" >> "$BUNDLE_PATH/Contents/Frameworks/Python.framework/Versions/A/Python"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product openai --validate-only >/dev/null 2>&1
@@ -452,7 +482,7 @@ codesign --force --sign - --identifier org.python.python \
   "$BUNDLE_PATH/Contents/Frameworks/Python.framework" >/dev/null
 codesign --force --sign - --identifier com.test.bridgepro "$BUNDLE_PATH" >/dev/null
 
-echo "Test 19: Product validate-only rejects confirm helper tampering"
+echo "Test 21: Product validate-only rejects confirm helper tampering"
 printf "tamper" >> "$BUNDLE_PATH/Contents/Helpers/imessage-confirm"
 set +e
 "$BUNDLE_PATH/Contents/Helpers/test-helper" --product openai --validate-only >/dev/null 2>&1
