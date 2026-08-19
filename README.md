@@ -8,6 +8,8 @@ This is an independent open-source project by Jeff Huber. It is not made,
 endorsed, or supported by Apple or xAI. Report vulnerabilities privately as
 described in [SECURITY.md](./SECURITY.md).
 
+> **Prefer a Mac app?** A commercial alternative with drag-and-drop installation and automatic updates is available at [messagebridge.app](https://messagebridge.app).
+
 ---
 
 ## What This Does
@@ -299,7 +301,7 @@ Full JSON protocol documentation: **[docs/PROTOCOL.md](./docs/PROTOCOL.md)**
 Quick reference:
 
 | Action | What It Does |
-|--------|--------------|
+|--------|------------|
 | `review` | Triage recent messages into needs-reply / low-priority / skip buckets |
 | `search` | Full-text substring search across all threads (sorted newest first) |
 | `chat_history` | Recent messages in one thread (by name, phone, email, or group ID—**group IDs NOT supported for sending**) |
