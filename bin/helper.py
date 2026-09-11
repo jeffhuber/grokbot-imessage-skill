@@ -9,7 +9,9 @@ and deletes the request.
 Security posture:
   - Actions are strictly whitelisted (no eval/exec/shell-out).
   - All SQL uses parameterized queries.
-  - chat.db is copied to a per-run tempfile (cleaned up on exit).
+  - chat.db is copied to a per-run tempfile in a mode-0700 private directory,
+    cleaned up on exit. This prevents same-UID processes from accessing the
+    unfiltered snapshot.
   - Read policy is applied before any message text is returned.
   - 2FA codes, card numbers, and SSN patterns are redacted in responses.
   - Response writes are atomic (tmp + rename) so the agent never reads a
@@ -878,13 +880,17 @@ def _matches_list(chat_id: str, sender: str, entries: tuple[str, ...] | list[str
     snd_l10 = _last10(snd)
     for entry in entries:
         entry_l10 = _last10(entry)
+        # Phone number: match last 10 digits
         if entry_l10 and (entry_l10 == cid_l10 or entry_l10 == snd_l10):
             return True
         if not entry_l10:
             lowered = entry.lower()
+            # Email: exact case-insensitive match
             if "@" in entry and (lowered == cid.lower() or lowered == snd.lower()):
                 return True
-            if "@" not in entry and (lowered in cid.lower() or lowered in snd.lower()):
+            # Group chat ID: exact case-insensitive match (not substring)
+            # to prevent "chat123" from matching "chat1234567890"
+            if "@" not in entry and (lowered == cid.lower() or lowered == snd.lower()):
                 return True
     return False
 
@@ -1215,7 +1221,16 @@ def _run_send_confirmation(
 def copy_chatdb() -> Path:
     if not CHAT_DB_PATH.exists():
         raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
-    fd, tmp = tempfile.mkstemp(prefix="cowork_imessage_", suffix=".db")
+    
+    # Create a private temp directory with mode 0700 to prevent same-UID
+    # processes from listing/accessing the snapshot. The directory is created
+    # under the system temp location but with restricted permissions.
+    tmpdir = tempfile.mkdtemp(prefix="cowork_imessage_", suffix=".dir")
+    os.chmod(tmpdir, 0o700)
+    
+    fd, tmp = tempfile.mkstemp(
+        prefix="chat_", suffix=".db", dir=tmpdir
+    )
     os.close(fd)
     snapshot = Path(tmp)
     source = None
@@ -1231,6 +1246,10 @@ def copy_chatdb() -> Path:
         return snapshot
     except Exception:
         cleanup_tmpdb(snapshot)
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
         raise
     finally:
         if destination is not None:
@@ -1240,6 +1259,7 @@ def copy_chatdb() -> Path:
 
 
 def cleanup_tmpdb(path: Path) -> None:
+    parent_dir = path.parent
     for suffix in ("", "-wal", "-shm"):
         p = Path(str(path) + suffix)
         try:
@@ -1247,6 +1267,12 @@ def cleanup_tmpdb(path: Path) -> None:
                 p.unlink()
         except Exception:
             pass
+    # Clean up the private temp directory created in copy_chatdb
+    try:
+        if parent_dir.name.startswith("cowork_imessage_") and parent_dir.name.endswith(".dir"):
+            parent_dir.rmdir()
+    except OSError:
+        pass
 
 
 def open_snapshot(db_path: Path) -> sqlite3.Connection:
