@@ -63,15 +63,15 @@ def install_entries(path: Path, entries: list[str]) -> None:
     if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
     
-    # Resolve to canonical path to prevent symlink TOCTOU races
-    # between validation and sudo write
-    try:
-        canonical = path.resolve(strict=True)
-        if canonical != path.resolve():
+    # Pre-install symlink check: reject if path exists and is a symlink
+    if path.exists():
+        if path.is_symlink():
             raise RuntimeError("allowlist path must not be a symlink")
-    except (OSError, RuntimeError):
-        # Path doesn't exist yet or is invalid - let install create it,
-        # but verify the parent is what we expect
+        # Compare abspath vs realpath on the pre-resolve path
+        if os.path.abspath(str(path)) != os.path.realpath(str(path)):
+            raise RuntimeError("allowlist path must not be a symlink")
+    else:
+        # Path doesn't exist yet - verify parent is what we expect
         parent_canonical = path.parent.resolve(strict=False)
         if parent_canonical != expected_path.parent.resolve(strict=False):
             raise RuntimeError("allowlist parent directory mismatch")
@@ -98,8 +98,13 @@ def install_entries(path: Path, entries: list[str]) -> None:
             check=True,
         )
         
-        # Verify the installed file is at the expected canonical location
+        # Post-install verification with lstat: must not be a symlink
         try:
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError("installed allowlist is not a regular file")
+            if os.path.abspath(str(path)) != os.path.realpath(str(path)):
+                raise RuntimeError("installed allowlist is a symlink")
             post_install_canonical = path.resolve(strict=True)
             if post_install_canonical != expected_path.resolve(strict=False):
                 raise RuntimeError("allowlist was not created at expected location")
