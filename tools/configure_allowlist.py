@@ -59,8 +59,23 @@ def read_entries(path: Path) -> list[str]:
 
 
 def install_entries(path: Path, entries: list[str]) -> None:
-    if path != allowlist_path():
+    expected_path = allowlist_path()
+    if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
+    
+    # Pre-install symlink check: reject if path exists and is a symlink
+    if path.exists():
+        if path.is_symlink():
+            raise RuntimeError("allowlist path must not be a symlink")
+        # Compare abspath vs realpath on the pre-resolve path
+        if os.path.abspath(str(path)) != os.path.realpath(str(path)):
+            raise RuntimeError("allowlist path must not be a symlink")
+    else:
+        # Path doesn't exist yet - verify parent is what we expect
+        parent_canonical = path.parent.resolve(strict=False)
+        if parent_canonical != expected_path.parent.resolve(strict=False):
+            raise RuntimeError("allowlist parent directory mismatch")
+    
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
         handle.write(HEADER)
         for entry in sorted(set(entries), key=str.casefold):
@@ -82,6 +97,20 @@ def install_entries(path: Path, entries: list[str]) -> None:
             ],
             check=True,
         )
+        
+        # Post-install verification with lstat: must not be a symlink
+        try:
+            metadata = path.lstat()
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError("installed allowlist is not a regular file")
+            if os.path.abspath(str(path)) != os.path.realpath(str(path)):
+                raise RuntimeError("installed allowlist is a symlink")
+            post_install_canonical = path.resolve(strict=True)
+            if post_install_canonical != expected_path.resolve(strict=False):
+                raise RuntimeError("allowlist was not created at expected location")
+        except OSError as e:
+            raise RuntimeError(f"allowlist verification failed: {e}")
+        
         subprocess.run(["/usr/bin/sudo", "/bin/chmod", "-N", str(path)], check=True)
         subprocess.run(
             [
