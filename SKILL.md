@@ -20,7 +20,7 @@ Use when the user asks to:
 - Find messages that need a response
 - Search history for a topic, person, or phrase
 - Pull a specific conversation's recent messages
-- Compute response-time statistics (e.g., "average reply time to Angel over the last 24 hours")
+- Compute response-time statistics (e.g., "average reply time to Alex over the last 24 hours")
 - Send a plain-text iMessage to an existing contact
 
 ## Architecture
@@ -222,7 +222,7 @@ done
 
 **Request:**
 ```json
-{"id": "abc123", "action": "contacts_lookup", "params": {"name": "Angel"}}
+{"id": "abc123", "action": "contacts_lookup", "params": {"name": "Alex"}}
 ```
 
 **Response:** Array of `matches` with `name`, and either `phone_last10` or `email`. Returns up to 25 matches.
