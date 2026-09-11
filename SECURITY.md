@@ -239,9 +239,13 @@ installer to restore an expected directory layout.
 ## The chat.db copy
 
 The helper uses SQLite's online backup API to create a consistent per-request
-snapshot while Messages may still be writing to `chat.db`. It reads the
-mode-600 snapshot and deletes it at the end of the request. An abnormal exit
-(OOM or SIGKILL) can leave a stale copy behind.
+snapshot while Messages may still be writing to `chat.db`. The snapshot is
+created in a mode-0700 private temporary directory, reducing accidental
+discovery by same-UID processes. The 0700 directory prevents listing but
+does not prevent read access if the full path is known; same-UID processes
+can still read the snapshot. The snapshot and its containing directory are
+deleted at the end of the request. An abnormal exit (OOM or SIGKILL) can
+leave stale copies behind.
 
 `send` actions do NOT copy `chat.db` — a `needs_db` flag on each
 request handler short-circuits the copy for write-only operations.
