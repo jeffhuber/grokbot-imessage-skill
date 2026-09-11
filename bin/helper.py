@@ -10,8 +10,8 @@ Security posture:
   - Actions are strictly whitelisted (no eval/exec/shell-out).
   - All SQL uses parameterized queries.
   - chat.db is copied to a per-run tempfile in a mode-0700 private directory,
-    cleaned up on exit. This prevents same-UID processes from accessing the
-    unfiltered snapshot.
+    cleaned up on exit. This reduces accidental discovery by same-UID processes
+    but is not a confidentiality boundary against them.
   - Read policy is applied before any message text is returned.
   - 2FA codes, card numbers, and SSN patterns are redacted in responses.
   - Response writes are atomic (tmp + rename) so the agent never reads a
