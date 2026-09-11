@@ -258,9 +258,9 @@ Sending is gated at the **helper level** with two layers of protection:
    - **Cancel is the keyboard default.** You must deliberately select **Send** to proceed. Clicking Cancel or waiting 60 seconds aborts the send.
    - This dialog enforces human approval at the macOS level—even a valid nonce requires explicit user confirmation.
 
-![Native send confirmation dialog. Cancel is the default action.](docs/images/send-confirm-dialog.png)
+<!-- Screenshot: docs/images/send-confirm-dialog.png (illustrative; actual dialog appearance may vary by macOS version) -->
 
-This is the native macOS confirmation shown after valid send nonce validation. **Cancel** is the keyboard default (Return key); **Send** requires a deliberate click. The example shows the message payload displayed to the user before any send occurs.
+The native macOS confirmation dialog displays after valid send nonce validation. **Cancel** is the keyboard default (Return key); **Send** requires a deliberate click. The dialog shows the recipient (resolved contact name if available, otherwise the raw identifier), service (iMessage or SMS), and the complete message body in a scrollable, read-only text view.
 
 Nonces expire after 60 seconds, are single-use, and are deleted on validation
 failure. A process that can read and write the bridge can mint its own nonce, so
