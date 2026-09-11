@@ -4,6 +4,8 @@
 
 This repository provides a **Grok Bot skill** that lets Grok Bot interact with your iMessages on macOS. A local launchd helper reads your Messages database and sends via AppleScript. The helper makes no network requests, but message content selected for Grok is processed through xAI's normal service pipeline.
 
+**This is an experimental integration.** It grants an AI assistant read access to your entire Messages database, which includes private conversations and potentially sensitive information. The helper requires Full Disk Access—a coarse macOS permission with significant security implications. Review [SECURITY.md](./SECURITY.md) carefully before installation, especially if you handle health data or communications subject to regulatory requirements (HIPAA, FDA 21 CFR Part 11, etc.).
+
 This is an independent open-source project by Jeff Huber. It is not made,
 endorsed, or supported by Apple or xAI. Report vulnerabilities privately as
 described in [SECURITY.md](./SECURITY.md).
@@ -15,7 +17,7 @@ described in [SECURITY.md](./SECURITY.md).
 - **Read & Triage:** "Review my messages from the last 2 days" → Grok Bot reads your iMessages, categorizes threads by urgency, and surfaces what needs a reply.
 - **Search:** "Find all messages mentioning 'dinner plans' in the last month" → Full-text search across your message history.
 - **Chat History:** "Pull my conversation with Alex from the last week" → Retrieves a specific thread's recent messages.
-- **Response Stats:** "What's my average reply time to Angel over the last 24 hours?" → Computes timing statistics.
+- **Response Stats:** "What's my average reply time to Alex over the last 24 hours?" → Computes timing statistics.
 - **Send (with preview-and-confirm):** "Text +1-555-123-4567: 'Running 10 minutes late'" → Grok Bot previews the message, you approve, then it sends via AppleScript.
 
 ---
@@ -181,7 +183,7 @@ Once installed, ask Grok Bot things like:
 
 - **Triage:** "Review my iMessages from the last day."
 - **Search:** "Find messages about 'project deadline' in the last 2 weeks."
-- **Chat History:** "Show my conversation with Angel from the last 3 days."
+- **Chat History:** "Show my conversation with Alex from the last 3 days."
 - **Response Time:** "How fast do I reply to Alex on average?"
 - **Send (preview-first):** "Text +1-555-123-4567: 'On my way!'"
 

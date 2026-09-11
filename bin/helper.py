@@ -1346,7 +1346,7 @@ def filter_contacts(
 
 
 # ---------------------------------------------------------------------------
-# Chat resolution: "Angel Vossough" | phone | email -> chat_identifier substring
+# Chat resolution: "Alex Example" | phone | email -> chat_identifier substring
 # ---------------------------------------------------------------------------
 def resolve_chat_filter(q: str, contacts: dict[str, str]) -> str:
     """Return a substring suitable for matching chat_identifier/sender."""
