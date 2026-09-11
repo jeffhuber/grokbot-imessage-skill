@@ -350,7 +350,7 @@ Computes reply-time statistics over the specified window.
   "id": "abc123",
   "action": "contacts_lookup",
   "params": {
-    "name": "Angel"
+    "name": "Alex"
   }
 }
 ```
@@ -361,7 +361,7 @@ Computes reply-time statistics over the specified window.
   "id": "abc123",
   "ok": true,
   "action": "contacts_lookup",
-  "query": "Angel",
+  "query": "Alex",
   "match_count": 1,
   "matches": [
     {
