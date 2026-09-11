@@ -59,8 +59,23 @@ def read_entries(path: Path) -> list[str]:
 
 
 def install_entries(path: Path, entries: list[str]) -> None:
-    if path != allowlist_path():
+    expected_path = allowlist_path()
+    if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
+    
+    # Resolve to canonical path to prevent symlink TOCTOU races
+    # between validation and sudo write
+    try:
+        canonical = path.resolve(strict=True)
+        if canonical != path.resolve():
+            raise RuntimeError("allowlist path must not be a symlink")
+    except (OSError, RuntimeError):
+        # Path doesn't exist yet or is invalid - let install create it,
+        # but verify the parent is what we expect
+        parent_canonical = path.parent.resolve(strict=False)
+        if parent_canonical != expected_path.parent.resolve(strict=False):
+            raise RuntimeError("allowlist parent directory mismatch")
+    
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
         handle.write(HEADER)
         for entry in sorted(set(entries), key=str.casefold):
@@ -82,6 +97,15 @@ def install_entries(path: Path, entries: list[str]) -> None:
             ],
             check=True,
         )
+        
+        # Verify the installed file is at the expected canonical location
+        try:
+            post_install_canonical = path.resolve(strict=True)
+            if post_install_canonical != expected_path.resolve(strict=False):
+                raise RuntimeError("allowlist was not created at expected location")
+        except OSError as e:
+            raise RuntimeError(f"allowlist verification failed: {e}")
+        
         subprocess.run(["/usr/bin/sudo", "/bin/chmod", "-N", str(path)], check=True)
         subprocess.run(
             [
