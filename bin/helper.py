@@ -113,7 +113,7 @@ _PRODUCT_ENV_VARS = (
 )
 WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
-HELPER_VERSION = "1.4.3"
+HELPER_VERSION = "1.4.4"
 PROTOCOL_VERSION = "1.2"
 
 # Bridge role. The DIY install and every host bridge run as "host". A
