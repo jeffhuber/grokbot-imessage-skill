@@ -9,9 +9,7 @@ and deletes the request.
 Security posture:
   - Actions are strictly whitelisted (no eval/exec/shell-out).
   - All SQL uses parameterized queries.
-  - chat.db is copied to a per-run tempfile in a mode-0700 private directory,
-    cleaned up on exit. This reduces accidental discovery by same-UID processes
-    but is not a confidentiality boundary against them.
+  - chat.db is copied to a per-run tempfile (cleaned up on exit).
   - Read policy is applied before any message text is returned.
   - 2FA codes, card numbers, and SSN patterns are redacted in responses.
   - Response writes are atomic (tmp + rename) so the agent never reads a
@@ -1222,9 +1220,9 @@ def copy_chatdb() -> Path:
     if not CHAT_DB_PATH.exists():
         raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
     
-    # Create a private temp directory with mode 0700 to prevent same-UID
-    # processes from listing/accessing the snapshot. The directory is created
-    # under the system temp location but with restricted permissions.
+    # Create a private temp directory with mode 0700 to reduce flat /tmp
+    # discovery by other-UID processes. Same-UID can still access if they
+    # know the path; this is not a confidentiality boundary against them.
     tmpdir = tempfile.mkdtemp(prefix="cowork_imessage_", suffix=".dir")
     os.chmod(tmpdir, 0o700)
     
