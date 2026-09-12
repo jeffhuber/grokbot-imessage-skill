@@ -6,6 +6,18 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.4 - 2026-09-12
+
+- Environment variable pass-through: `IMESSAGE_SNAPSHOT_MAX_MB` is now forwarded
+  from the LaunchAgent's environment to the Python helper in both baked-path and
+  product-build modes. Operators with large chat databases (>500 MB) can raise
+  the in-memory snapshot limit by adding `IMESSAGE_SNAPSHOT_MAX_MB` to the
+  `EnvironmentVariables` dict in the LaunchAgent plist. The default remains
+  500 MB (fail-closed). Invalid values continue to fall back to the default.
+- Documentation: Added LaunchAgent `EnvironmentVariables` configuration example
+  to the plist template and troubleshooting sections in README.md and SECURITY.md,
+  documenting how to set `IMESSAGE_SNAPSHOT_MAX_MB` for large databases.
+
 ## 1.4.3 - 2026-09-12
 
 - Snapshot OOM hardening: Include `chat.db-wal` size in snapshot limit check.

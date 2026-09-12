@@ -279,6 +279,24 @@ megabytes) and ensuring adequate physical memory is available. An OOM during
 snapshot creation aborts the request without leaving artifacts behind. Invalid
 or zero limit values fail closed at the 500 MB default.
 
+To raise the limit, add the environment variable to the LaunchAgent plist. Edit
+`~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` and add the key
+under `EnvironmentVariables`:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+  <key>PATH</key>
+  <string>/usr/bin:/bin</string>
+  <key>IMESSAGE_SNAPSHOT_MAX_MB</key>
+  <string>1024</string>
+</dict>
+```
+
+Then reload the agent with `launchctl unload` followed by `launchctl load` of
+the plist path. The helper reads this value from its process environment on
+each request.
+
 The snapshot exists only during the processing of a single request and is
 closed immediately after the response is written. An abnormal exit (OOM or
 SIGKILL) terminates the process without leaving any snapshot behind.
