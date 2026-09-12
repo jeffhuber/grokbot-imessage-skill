@@ -128,6 +128,48 @@ class SendConfirmationTests(BridgeDirMixin, unittest.TestCase):
 
         send.assert_not_called()
 
+    def test_osascript_receives_embedded_body_not_tempfile_path(self) -> None:
+        """Regression: verify send embeds body in AppleScript, not via tempfile.
+        
+        Pre-v1.3.1 wrote body to NamedTemporaryFile and had AppleScript read
+        'POSIX file "<path>"', creating a race where same-UID could swap the
+        file. v1.3.1+ embeds the body directly in the AppleScript with proper
+        escaping, closing the race.
+        """
+        to = "alice@example.com"
+        # Test escaping: double-quote, backslash, and newlines must survive
+        text = 'Hello "World"!\nLine 2 with \\backslash'
+        nonce = self._nonce(to, text)
+        
+        with mock.patch.object(
+            helper, "_run_send_confirmation", return_value=True
+        ), mock.patch.object(
+            helper, "_run_osascript", return_value=(0, "", "")
+        ) as send:
+            helper.action_send(
+                {"to": to, "text": text, "send_nonce": nonce},
+                None,
+                {},
+                [],
+            )
+        
+        send.assert_called_once()
+        script = send.call_args[0][0]
+        
+        # Must NOT contain tempfile path reference
+        self.assertNotIn("POSIX file", script)
+        self.assertNotIn("/tmp/", script)
+        self.assertNotIn("NamedTemporaryFile", script)
+        
+        # Must contain the message body embedded with proper escaping
+        # AppleScript escaping: backslash first, then double-quote
+        escaped_text = text.replace("\\", "\\\\").replace('"', '\\"')
+        self.assertIn(f'set msgBody to "{escaped_text}"', script)
+        
+        # Verify the script structure
+        self.assertIn('tell application "Messages"', script)
+        self.assertIn(f'send msgBody to buddy "{to}"', script)
+
     def test_confirmation_helper_receives_json_on_stdin(self) -> None:
         completed = mock.Mock(returncode=0, stdout="", stderr="")
         with mock.patch.object(helper.subprocess, "run", return_value=completed) as run:
