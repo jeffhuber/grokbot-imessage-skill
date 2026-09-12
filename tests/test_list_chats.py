@@ -347,8 +347,7 @@ class RoleGateTests(_FixtureMixin, unittest.TestCase):
             mock.patch.object(helper, "REQUESTS_DIR", self.requests_dir),
             mock.patch.object(helper, "RESPONSES_DIR", self.responses_dir),
             mock.patch.object(helper, "LOG_PATH", root / "control" / "log.txt"),
-            mock.patch.object(helper, "copy_chatdb", return_value=self.db_path),
-            mock.patch.object(helper, "cleanup_tmpdb", lambda p: None),
+            mock.patch.object(helper, "copy_chatdb", return_value=self.conn),
             mock.patch.object(helper, "load_contacts", return_value=self.contacts),
         ]
         for p in self._patches:
