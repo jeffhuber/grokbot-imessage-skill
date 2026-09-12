@@ -502,8 +502,63 @@ class SnapshotSizeGuardTests(BridgeDirMixin, unittest.TestCase):
         
         with mock.patch.object(helper, "CHAT_DB_PATH", tmp_path), \
              mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "10"}):
-            with self.assertRaisesRegex(RuntimeError, r"chat\.db size \(10 MB\) exceeds snapshot limit \(10 MB\)"):
+            with self.assertRaisesRegex(RuntimeError, r"chat\.db \+ WAL size \(10 MB: 10 MB db \+ 0 MB wal\) exceeds snapshot limit \(10 MB\)"):
                 helper.copy_chatdb()
+
+    def test_oversized_wal_rejected(self) -> None:
+        """chat.db + large WAL exceeding limit raises RuntimeError."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-wal-test-") as td:
+            tmp_dir = Path(td)
+            db_path = tmp_dir / "chat.db"
+            wal_path = tmp_dir / f"{db_path.name}-wal"
+            
+            # Create a small valid database (1 MB)
+            conn = helper.sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE test (id INTEGER)")
+            conn.commit()
+            conn.close()
+            # Pad db to ~1 MB
+            with open(db_path, "ab") as f:
+                f.write(b"x" * (1024 * 1024))
+            
+            # Create a large WAL file (10 MB)
+            with open(wal_path, "wb") as f:
+                f.write(b"x" * (10 * 1024 * 1024))
+            
+            with mock.patch.object(helper, "CHAT_DB_PATH", db_path), \
+                 mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "10"}):
+                with self.assertRaisesRegex(RuntimeError, r"chat\.db \+ WAL size \(11 MB: 1 MB db \+ 10 MB wal\) exceeds snapshot limit \(10 MB\)"):
+                    helper.copy_chatdb()
+
+    def test_wal_size_included_when_present(self) -> None:
+        """WAL file is counted toward size limit when present."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-wal-present-") as td:
+            tmp_dir = Path(td)
+            db_path = tmp_dir / "chat.db"
+            wal_path = tmp_dir / f"{db_path.name}-wal"
+            
+            # Create a minimal valid database
+            conn = helper.sqlite3.connect(str(db_path))
+            conn.execute("CREATE TABLE test (id INTEGER)")
+            conn.commit()
+            conn.close()
+            
+            # Create a small WAL (100 KB)
+            with open(wal_path, "wb") as f:
+                f.write(b"x" * (100 * 1024))
+            
+            # Both db + wal should be well under 1 MB limit
+            with mock.patch.object(helper, "CHAT_DB_PATH", db_path), \
+                 mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "1"}):
+                # Should not raise
+                snapshot = helper.copy_chatdb()
+                self.addCleanup(snapshot.close)
+                cursor = snapshot.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                if tables and isinstance(tables[0], bytes):
+                    tables = [t.decode('utf-8') for t in tables]
+                self.assertIn("test", tables)
 
     def test_undersized_chatdb_accepted(self) -> None:
         """chat.db under the limit proceeds to snapshot."""
