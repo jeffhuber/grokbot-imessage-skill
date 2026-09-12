@@ -242,11 +242,24 @@ The helper uses SQLite's online backup API to create a consistent per-request
 snapshot while Messages may still be writing to `chat.db`. The snapshot is
 created entirely in-memory (using SQLite's `:memory:` mode) within the helper
 process's address space. This eliminates same-UID disk exposure: no temporary
-files are written, so other processes running as the same user cannot discover
-or read the snapshot even if they know the helper is running.
+files are written, so other processes cannot casually discover or open the
+snapshot file.
 
-The in-memory snapshot exists only during the processing of a single request and
-is closed immediately after the response is written. An abnormal exit (OOM or
+**Residual same-UID risk:** A same-UID process with debugging privileges
+(ptrace, task_for_pid, kernel extensions) can still read the helper's
+process memory while the snapshot is loaded. macOS System Integrity
+Protection (SIP) restricts debugging for many processes, but any same-UID
+compromise can also read the original `chat.db` directly via the helper's
+Full Disk Access grant. The in-memory approach is strictly better than
+disk tempfiles for reducing casual discovery, but it does not provide
+confidentiality against a same-UID attacker with debugging access.
+
+The in-memory snapshot can be hundreds of MB for large message databases.
+An out-of-memory condition during snapshot creation will abort the request;
+the old disk-based approach tolerated larger databases by spilling to swap.
+
+The snapshot exists only during the processing of a single request and is
+closed immediately after the response is written. An abnormal exit (OOM or
 SIGKILL) terminates the process without leaving any snapshot behind.
 
 `send` actions do NOT copy `chat.db` — a `needs_db` flag on each
