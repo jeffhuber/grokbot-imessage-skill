@@ -729,6 +729,7 @@ int main(int argc, char **argv) {
     static char env_send_gate_path[PATH_MAX + 64];
     static char env_host_display[128];
     static char env_host_icon[PATH_MAX + 48];
+    static char env_snapshot_max_mb[64];
 
     if (set_env_value(env_home, sizeof(env_home), "HOME", pw->pw_dir) != 0 ||
         set_env_value(env_tmpdir, sizeof(env_tmpdir), "TMPDIR", tmpdir) != 0 ||
@@ -758,6 +759,16 @@ int main(int argc, char **argv) {
         return 7;
     }
 
+    const char *snapshot_max_mb_env = getenv("IMESSAGE_SNAPSHOT_MAX_MB");
+    bool snapshot_max_mb_set = false;
+    if (snapshot_max_mb_env && snapshot_max_mb_env[0] != '\0') {
+        if (set_env_value(env_snapshot_max_mb, sizeof(env_snapshot_max_mb),
+                          "IMESSAGE_SNAPSHOT_MAX_MB", snapshot_max_mb_env) != 0) {
+            return 7;
+        }
+        snapshot_max_mb_set = true;
+    }
+
     static char *new_env_host[] = {
         env_path,
         env_home,
@@ -770,6 +781,7 @@ int main(int argc, char **argv) {
         env_confirm_path,
         env_send_gate_path,
         env_host_display,
+        NULL,
         NULL,
         NULL,
     };
@@ -787,11 +799,18 @@ int main(int argc, char **argv) {
         env_host_display,
         NULL,
         NULL,
+        NULL,
     };
 
+    size_t host_next = (sizeof(new_env_host) / sizeof(new_env_host[0])) - 3;
+    size_t manager_next = (sizeof(new_env_manager) / sizeof(new_env_manager[0])) - 3;
     if (host_icon_available) {
-        new_env_host[(sizeof(new_env_host) / sizeof(new_env_host[0])) - 2] = env_host_icon;
-        new_env_manager[(sizeof(new_env_manager) / sizeof(new_env_manager[0])) - 2] = env_host_icon;
+        new_env_host[host_next++] = env_host_icon;
+        new_env_manager[manager_next++] = env_host_icon;
+    }
+    if (snapshot_max_mb_set) {
+        new_env_host[host_next++] = env_snapshot_max_mb;
+        new_env_manager[manager_next++] = env_snapshot_max_mb;
     }
 
     environ = is_host ? new_env_host : new_env_manager;
@@ -855,6 +874,7 @@ int main(int argc, char **argv) {
     static char allowlist_buf[PATH_MAX + 64];
     static char root_policy_buf[64];
     static char host_display_buf[128];
+    static char snapshot_max_mb_buf[64];
 
     if (set_env_value(home_buf, sizeof(home_buf), "HOME",
                       pw && pw->pw_dir ? pw->pw_dir : "/") != 0 ||
@@ -874,6 +894,16 @@ int main(int argc, char **argv) {
         return 7;
     }
 
+    const char *snapshot_max_mb_env = getenv("IMESSAGE_SNAPSHOT_MAX_MB");
+    bool snapshot_max_mb_set = false;
+    if (snapshot_max_mb_env && snapshot_max_mb_env[0] != '\0') {
+        if (set_env_value(snapshot_max_mb_buf, sizeof(snapshot_max_mb_buf),
+                          "IMESSAGE_SNAPSHOT_MAX_MB", snapshot_max_mb_env) != 0) {
+            return 7;
+        }
+        snapshot_max_mb_set = true;
+    }
+
     static char *new_env[] = {
         "PATH=/usr/bin:/bin",
         home_buf,
@@ -885,7 +915,11 @@ int main(int argc, char **argv) {
         root_policy_buf,
         host_display_buf,
         NULL,
+        NULL,
     };
+    if (snapshot_max_mb_set) {
+        new_env[(sizeof(new_env) / sizeof(new_env[0])) - 2] = snapshot_max_mb_buf;
+    }
     environ = new_env;
 
     char *exec_argv[] = {
