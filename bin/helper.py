@@ -1216,21 +1216,16 @@ def _run_send_confirmation(
 # ---------------------------------------------------------------------------
 # DB handling
 # ---------------------------------------------------------------------------
-def copy_chatdb() -> Path:
+def copy_chatdb() -> sqlite3.Connection:
+    """Copy chat.db to an in-memory snapshot using SQLite's backup API.
+    
+    Returns an open connection to the in-memory snapshot. The caller is
+    responsible for closing the connection. This eliminates same-UID disk
+    exposure: the snapshot exists only in this process's memory space.
+    """
     if not CHAT_DB_PATH.exists():
         raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
     
-    # Create a private temp directory with mode 0700 to reduce flat /tmp
-    # discovery by other-UID processes. Same-UID can still access if they
-    # know the path; this is not a confidentiality boundary against them.
-    tmpdir = tempfile.mkdtemp(prefix="cowork_imessage_", suffix=".dir")
-    os.chmod(tmpdir, 0o700)
-    
-    fd, tmp = tempfile.mkstemp(
-        prefix="chat_", suffix=".db", dir=tmpdir
-    )
-    os.close(fd)
-    snapshot = Path(tmp)
     source = None
     destination = None
     try:
@@ -1239,46 +1234,18 @@ def copy_chatdb() -> Path:
         # locking/change detection. The online backup API supplies the snapshot.
         source_uri = f"{CHAT_DB_PATH.resolve().as_uri()}?mode=ro&cache=private"
         source = sqlite3.connect(source_uri, uri=True, timeout=5)
-        destination = sqlite3.connect(str(snapshot))
+        # Use in-memory database instead of disk-based tempfile
+        destination = sqlite3.connect(":memory:")
+        destination.text_factory = bytes
         source.backup(destination)
-        return snapshot
+        return destination
     except Exception:
-        cleanup_tmpdb(snapshot)
-        try:
-            os.rmdir(tmpdir)
-        except OSError:
-            pass
-        raise
-    finally:
         if destination is not None:
             destination.close()
+        raise
+    finally:
         if source is not None:
             source.close()
-
-
-def cleanup_tmpdb(path: Path) -> None:
-    parent_dir = path.parent
-    for suffix in ("", "-wal", "-shm"):
-        p = Path(str(path) + suffix)
-        try:
-            if p.exists():
-                p.unlink()
-        except Exception:
-            pass
-    # Clean up the private temp directory created in copy_chatdb
-    try:
-        if parent_dir.name.startswith("cowork_imessage_") and parent_dir.name.endswith(".dir"):
-            parent_dir.rmdir()
-    except OSError:
-        pass
-
-
-def open_snapshot(db_path: Path) -> sqlite3.Connection:
-    """Open a completed, private chat.db snapshot without SQLite sidecars."""
-    snapshot_uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
-    conn = sqlite3.connect(snapshot_uri, uri=True)
-    conn.text_factory = bytes
-    return conn
 
 
 def to_apple_ns(unix_seconds: float) -> int:
@@ -1608,6 +1575,9 @@ def action_contacts_lookup(params, conn, contacts, privacy_policy):
             else:
                 matches.append({"name": full_name, "phone_last10": handle})
     return {"query": name, "match_count": len(matches), "matches": matches[:25]}
+
+
+action_contacts_lookup.needs_db = False  # type: ignore[attr-defined]
 
 
 # chat.style in chat.db is IMChatStyle: 43 (ASCII '+') = group chat,
@@ -2110,16 +2080,14 @@ def process_request(
         })
         return
 
-    db_path = None
+    conn = None
     try:
         action_fn = ACTIONS[action]
         # Send-side actions declare needs_db=False; skip the (potentially
         # hundreds-of-MB) chat.db snapshot on that path.
         needs_db = getattr(action_fn, "needs_db", True)
-        conn = None
         if needs_db:
-            db_path = copy_chatdb()
-            conn = open_snapshot(db_path)
+            conn = copy_chatdb()
         needs_contacts = getattr(action_fn, "needs_contacts", True)
         contacts = load_contacts() if needs_contacts else {}
         result = action_fn(params, conn, contacts, privacy_policy)
@@ -2136,8 +2104,8 @@ def process_request(
             "allowed_actions": sorted(permitted),
         })
     finally:
-        if db_path is not None:
-            cleanup_tmpdb(db_path)
+        if conn is not None:
+            conn.close()
 
 
 def _acquire_bridge_lock(control_fd: int, timeout_s: float = OSASCRIPT_TIMEOUT_S + 10.0) -> int:
