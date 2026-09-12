@@ -172,8 +172,10 @@ Sending is confirmation-gated via a two-layer preview/confirm protocol:
    (backslash and double-quote only). This eliminates the tempfile pathname handoff
    that existed in v1.3.0 and earlier, closing the TOCTOU race where a malicious
    same-UID process could replace the tempfile between write and AppleScript read.
-   The body that reaches Messages.app is now cryptographically bound to the
-   dialog-approved payload via the nonce hash validated in Layer 1.
+   The approved body reaches Messages.app integrity-preserved with no mutable
+   pathname step — the same Python `text` variable validated in Layer 1 and shown
+   in Layer 2 is embedded in the AppleScript, so transmitted bytes match the
+   dialog exactly.
 
 This three-layer gate is enforced **helper-side**. A process that writes
 directly to the bridge folder and issues a `send` with no nonce, a forged
@@ -187,8 +189,8 @@ still prevents a blind one-request send, replay, or swapping the payload after a
 preview. To complete any attacker-created send, the victim must deliberately
 click **Send** in the native dialog showing the exact recipient, service, and
 complete message body. The approved body is then passed integrity-preserved
-to AppleScript with no mutable pathname step, so the transmitted bytes match
-the dialog exactly. Unexpected dialogs should always be cancelled.
+to AppleScript (same Python `text` variable, no mutable pathname), so transmitted
+bytes match the dialog exactly. Unexpected dialogs should always be cancelled.
 
 The v0.3.x AI-side check still runs as well; the helper-side nonce gate
 and native dialog are defense in depth, not a replacement.
