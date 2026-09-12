@@ -113,7 +113,7 @@ _PRODUCT_ENV_VARS = (
 )
 WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
-HELPER_VERSION = "1.4.2"
+HELPER_VERSION = "1.4.3"
 PROTOCOL_VERSION = "1.2"
 
 # Bridge role. The DIY install and every host bridge run as "host". A
@@ -1247,26 +1247,34 @@ def copy_chatdb() -> sqlite3.Connection:
     responsible for closing the connection. This eliminates same-UID disk
     exposure: the snapshot exists only in this process's memory space.
     
-    Raises RuntimeError if chat.db exceeds the configured size limit
-    (IMESSAGE_SNAPSHOT_MAX_MB, default 500 MB). Large databases can cause
-    OOM during the in-memory snapshot; operators should ensure adequate
-    memory before raising the limit.
+    Raises RuntimeError if chat.db + chat.db-wal exceeds the configured
+    size limit (IMESSAGE_SNAPSHOT_MAX_MB, default 500 MB). Large databases
+    can cause OOM during the in-memory snapshot; operators should ensure
+    adequate memory before raising the limit. SQLite's backup API includes
+    uncommitted WAL data in the snapshot, so both files count against the limit.
     """
     if not CHAT_DB_PATH.exists():
         raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
     
-    # Check size before attempting snapshot to fail fast on OOM risk
+    # Check size before attempting snapshot to fail fast on OOM risk.
+    # SQLite backup includes WAL data, so count both chat.db and chat.db-wal.
     try:
         db_size = CHAT_DB_PATH.stat().st_size
+        wal_path = CHAT_DB_PATH.parent / f"{CHAT_DB_PATH.name}-wal"
+        wal_size = wal_path.stat().st_size if wal_path.exists() else 0
+        total_size = db_size + wal_size
     except OSError as e:
-        raise RuntimeError(f"cannot stat chat.db: {e}") from e
+        raise RuntimeError(f"cannot stat chat.db or WAL: {e}") from e
     
     max_bytes = _get_snapshot_max_bytes()
-    if db_size > max_bytes:
+    if total_size > max_bytes:
         max_mb = max_bytes // (1024 * 1024)
-        actual_mb = db_size // (1024 * 1024)
+        actual_mb = total_size // (1024 * 1024)
+        db_mb = db_size // (1024 * 1024)
+        wal_mb = wal_size // (1024 * 1024)
         raise RuntimeError(
-            f"chat.db size ({actual_mb} MB) exceeds snapshot limit ({max_mb} MB); "
+            f"chat.db + WAL size ({actual_mb} MB: {db_mb} MB db + {wal_mb} MB wal) "
+            f"exceeds snapshot limit ({max_mb} MB); "
             f"set IMESSAGE_SNAPSHOT_MAX_MB to a higher value or archive old messages"
         )
     

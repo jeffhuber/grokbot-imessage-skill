@@ -6,6 +6,13 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.3 - 2026-09-12
+
+- Snapshot OOM hardening: Include `chat.db-wal` size in snapshot limit check.
+  SQLite's backup API includes uncommitted WAL data in the in-memory snapshot,
+  so both chat.db and chat.db-wal now count against `IMESSAGE_SNAPSHOT_MAX_MB`.
+  Error messages show breakdown (db + wal bytes) when limit is exceeded.
+
 ## 1.4.2 - 2026-09-12
 
 - Snapshot OOM hardening: Add size guard before in-memory `chat.db` snapshot.
