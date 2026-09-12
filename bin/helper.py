@@ -1148,10 +1148,9 @@ def _escape_as_string(s: str) -> str:
     """Escape a Python string for embedding as an AppleScript string literal.
 
     AppleScript string literals are double-quoted; only `"` and `\\` need
-    to be escaped. We do NOT try to escape arbitrary message bodies this
-    way — those are handed to AppleScript via a tempfile to sidestep the
-    whole class of escaping bugs. This helper is for short, already-
-    validated fields like the recipient identifier and the tempfile path.
+    to be escaped (in that order: backslash first to avoid double-escaping).
+    This is used for recipient identifiers and message bodies that have
+    already passed validation (printable Unicode + safe whitespace only).
     """
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -1806,12 +1805,15 @@ action_send_preview.needs_db = False  # type: ignore[attr-defined]
 def action_send(params, conn, contacts, privacy_policy):
     """Send an iMessage (or SMS via iPhone relay) via AppleScript.
 
-    The message body is written to a tempfile and read by AppleScript as
-    UTF-8, which sidesteps every AppleScript string-escape bug and lets us
-    send arbitrary Unicode (including emoji and newlines) unchanged.
+    The message body is escaped and embedded directly in the AppleScript code,
+    eliminating the tempfile race where a same-UID process could swap the file
+    between write and AppleScript read. validate_send_text rejects control
+    characters (except \\n, \\r, \\t), so the text is printable Unicode plus
+    safe whitespace. _escape_as_string escapes backslash and double-quote for
+    AppleScript string literals.
 
-    Recipient identifiers are escaped inline as AppleScript string literals
-    because they've already passed `validate_send_recipient` (≤200 chars, stripped).
+    Recipient identifiers are also escaped inline as AppleScript string literals
+    after passing validate_send_recipient (≤200 chars, stripped).
 
     The `service type` slot is an AppleScript enum, not a string. We pick
     the clause statically from the validated service name so no untrusted
@@ -1856,34 +1858,22 @@ def action_send(params, conn, contacts, privacy_policy):
     else:  # SMS — already validated against _SERVICE_ENUM
         svc_clause = "1st service whose service type = SMS"
 
-    # Write the body to a tempfile, give AppleScript a POSIX path to it.
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", suffix=".txt", delete=False,
-        prefix="cowork_imessage_send_",
-    ) as f:
-        f.write(text)
-        body_path = f.name
-
-    try:
-        script = (
-            f'set msgBody to read POSIX file "{_escape_as_string(body_path)}" '
-            f'as «class utf8»\n'
-            f'tell application "Messages"\n'
-            f'    set svc to {svc_clause}\n'
-            f'    send msgBody to buddy "{_escape_as_string(to)}" of svc\n'
-            f'end tell\n'
+    # Pass the body directly in the AppleScript with proper escaping.
+    # This eliminates the tempfile race where a malicious same-UID process
+    # could replace the file between write and read.
+    script = (
+        f'set msgBody to "{_escape_as_string(text)}"\n'
+        f'tell application "Messages"\n'
+        f'    set svc to {svc_clause}\n'
+        f'    send msgBody to buddy "{_escape_as_string(to)}" of svc\n'
+        f'end tell\n'
+    )
+    rc, stdout, stderr = _run_osascript(script)
+    if rc != 0:
+        raise RuntimeError(
+            f"osascript send failed (rc={rc}): "
+            f"{stderr or stdout or 'no output'}"
         )
-        rc, stdout, stderr = _run_osascript(script)
-        if rc != 0:
-            raise RuntimeError(
-                f"osascript send failed (rc={rc}): "
-                f"{stderr or stdout or 'no output'}"
-            )
-    finally:
-        try:
-            os.unlink(body_path)
-        except OSError:
-            pass
 
     return {
         "sent": {
