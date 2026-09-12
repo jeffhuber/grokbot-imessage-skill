@@ -130,7 +130,10 @@ This is the primary trust boundary you need to understand.
   - Issue a `send_preview` request, read its nonce, and issue the matching
     `send` request. This can reach the native confirmation dialog, but it
     cannot silently send: the user must still review the displayed
-    recipient and message and click **Send**.
+    recipient and message and click **Send**. As of v1.3.1, the approved
+    payload is passed integrity-preserved to AppleScript, so the transmitted
+    message matches the dialog exactly (the pre-v1.3.1 tempfile race has
+    been closed).
 
 Read requests are not tied to an interactive user session. Hardened mode narrows
 the maximum disclosure to explicitly allowlisted chats, but any same-user process
@@ -161,10 +164,18 @@ Sending is confirmation-gated via a two-layer preview/confirm protocol:
    - Full message text in a scrollable, read-only view
 5. Cancel is the keyboard default. You must deliberately select **Send** to proceed. Clicking **Cancel** or waiting
    60 seconds aborts the send.
-6. Only after the dialog is confirmed does the helper call `osascript`
-   to send.
 
-This two-layer gate is enforced **helper-side**. A process that writes
+**Layer 3: Integrity-preserving AppleScript invocation (v1.3.1+)**
+
+6. After the dialog is confirmed, the helper passes the approved message body
+   directly to `osascript` embedded in the AppleScript code with proper escaping
+   (backslash and double-quote only). This eliminates the tempfile pathname handoff
+   that existed in v1.3.0 and earlier, closing the TOCTOU race where a malicious
+   same-UID process could replace the tempfile between write and AppleScript read.
+   The body that reaches Messages.app is now cryptographically bound to the
+   dialog-approved payload via the nonce hash validated in Layer 1.
+
+This three-layer gate is enforced **helper-side**. A process that writes
 directly to the bridge folder and issues a `send` with no nonce, a forged
 nonce, a replayed (already-consumed) nonce, an expired nonce (TTL is 60
 seconds), or a nonce whose bound payload differs from the `send` request's
@@ -175,7 +186,9 @@ nonce; the nonce is not an authorization boundary against that attacker. It
 still prevents a blind one-request send, replay, or swapping the payload after a
 preview. To complete any attacker-created send, the victim must deliberately
 click **Send** in the native dialog showing the exact recipient, service, and
-complete message body. Unexpected dialogs should always be cancelled.
+complete message body. The approved body is then passed integrity-preserved
+to AppleScript with no mutable pathname step, so the transmitted bytes match
+the dialog exactly. Unexpected dialogs should always be cancelled.
 
 The v0.3.x AI-side check still runs as well; the helper-side nonce gate
 and native dialog are defense in depth, not a replacement.
