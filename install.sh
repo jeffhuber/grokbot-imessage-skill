@@ -168,9 +168,8 @@ if [[ ! -f "$CONTACTS_DIR/blocked_chats.txt" ]]; then
 # Matches:
 #   - phone numbers: last 10 digits are compared (e.g. +1-555-123-4567,
 #     5551234567, and (555) 123-4567 all match the same chat).
-#   - email addresses: full case-insensitive match.
-#   - group ids / substrings: anything starting with "chat" or containing
-#     a distinctive substring.
+#   - email addresses: exact case-insensitive match.
+#   - group chat IDs: exact case-insensitive match (not substring).
 #
 # Messages from blocked chats are dropped BEFORE the response JSON is
 # written, so their text never enters the agent's context.

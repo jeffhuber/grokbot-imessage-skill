@@ -597,8 +597,8 @@ Format: one entry per line. Lines starting with `#` are ignored.
 
 **Matches:**
 - **Phone numbers:** last 10 digits compared (e.g., `+1-555-123-4567`, `5551234567`, `(555) 123-4567` all match)
-- **Email addresses:** full case-insensitive match
-- **Group chat IDs:** anything starting with `chat` or containing a distinctive substring
+- **Email addresses:** exact case-insensitive match
+- **Group chat IDs:** exact case-insensitive match (not substring — `chat123` will not match `chat1234567890`)
 
 **Example:**
 ```
