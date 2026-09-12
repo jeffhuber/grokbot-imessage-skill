@@ -236,19 +236,23 @@ owner, or permissive directory causes that operation to be rejected; the helper
 does not follow or repair the object. Run `tools/doctor.py` and rerun the chosen
 installer to restore an expected directory layout.
 
-## The chat.db copy
+## The chat.db snapshot
 
 The helper uses SQLite's online backup API to create a consistent per-request
 snapshot while Messages may still be writing to `chat.db`. The snapshot is
-created in a mode-0700 private temporary directory, reducing flat /tmp
-discovery. The 0700 directory mode means other-UID processes cannot list it,
-but same-UID processes can still read the snapshot if they know the path;
-0700 is not a confidentiality boundary against same-UID. The snapshot and
-its containing directory are deleted at the end of the request. An abnormal
-exit (OOM or SIGKILL) can leave stale copies behind.
+created entirely in-memory (using SQLite's `:memory:` mode) within the helper
+process's address space. This eliminates same-UID disk exposure: no temporary
+files are written, so other processes running as the same user cannot discover
+or read the snapshot even if they know the helper is running.
+
+The in-memory snapshot exists only during the processing of a single request and
+is closed immediately after the response is written. An abnormal exit (OOM or
+SIGKILL) terminates the process without leaving any snapshot behind.
 
 `send` actions do NOT copy `chat.db` — a `needs_db` flag on each
-request handler short-circuits the copy for write-only operations.
+request handler short-circuits the copy for write-only operations. Similarly,
+`contacts_lookup` skips the snapshot since it only needs Contacts data, not
+messages.
 
 ## Third-party privacy
 
