@@ -6,6 +6,17 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.1 - 2026-09-12
+
+- Security hardening: Batch A (request/response atomicity, bounded retention,
+  memory-only snapshots, send tempfile race fix, default-deny read allowlist),
+  Batch B (nonce collision hardening, install-time validation, send-gate state
+  isolation), and Batch C LOWs (enhanced diagnostics, pre-validation).
+- Privacy: Scrubbed contact names from git history and working tree.
+- Documentation: Clarified group chat ID matching uses exact case-insensitive
+  comparison (not substring matching) for blocklist and allowlist enforcement.
+- Repository cleanup: Removed history-rewrite inventory files after merge.
+
 ## 1.3.0 - 2026-08-16
 
 - Bridge protocol 1.2: add the `list_chats` action, which enumerates threads

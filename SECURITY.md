@@ -130,10 +130,9 @@ This is the primary trust boundary you need to understand.
   - Issue a `send_preview` request, read its nonce, and issue the matching
     `send` request. This can reach the native confirmation dialog, but it
     cannot silently send: the user must still review the displayed
-    recipient and message and click **Send**. As of v1.3.1, the approved
-    payload is passed integrity-preserved to AppleScript, so the transmitted
-    message matches the dialog exactly (the pre-v1.3.1 tempfile race has
-    been closed).
+    recipient and message and click **Send**. The approved payload is passed
+    integrity-preserved to AppleScript, so the transmitted message matches the
+    dialog exactly (the tempfile race has been closed in v1.4.1+).
 
 Read requests are not tied to an interactive user session. Hardened mode narrows
 the maximum disclosure to explicitly allowlisted chats, but any same-user process
@@ -165,12 +164,12 @@ Sending is confirmation-gated via a two-layer preview/confirm protocol:
 5. Cancel is the keyboard default. You must deliberately select **Send** to proceed. Clicking **Cancel** or waiting
    60 seconds aborts the send.
 
-**Layer 3: Integrity-preserving AppleScript invocation (v1.3.1+)**
+**Layer 3: Integrity-preserving AppleScript invocation**
 
 6. After the dialog is confirmed, the helper passes the approved message body
    directly to `osascript` embedded in the AppleScript code with proper escaping
    (backslash and double-quote only). This eliminates the tempfile pathname handoff
-   that existed in v1.3.0 and earlier, closing the TOCTOU race where a malicious
+   that existed in earlier versions, closing the TOCTOU race where a malicious
    same-UID process could replace the tempfile between write and AppleScript read.
    The approved body reaches Messages.app integrity-preserved with no mutable
    pathname step — the same Python `text` variable validated in Layer 1 and shown

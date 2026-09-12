@@ -229,7 +229,7 @@ lawyer@example.com
 chat123456789
 ```
 
-Phone numbers match by last 10 digits. Emails and group IDs match case-insensitively.
+Phone numbers match by last 10 digits. Emails and group IDs match by exact case-insensitive comparison (not substring).
 The blocklist always takes precedence, including for sends.
 
 ### Redaction Limitations
