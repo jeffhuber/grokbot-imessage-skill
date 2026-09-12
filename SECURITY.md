@@ -268,9 +268,15 @@ Full Disk Access grant. The in-memory approach is strictly better than
 disk tempfiles for reducing casual discovery, but it does not provide
 confidentiality against a same-UID attacker with debugging access.
 
-The in-memory snapshot can be hundreds of MB for large message databases.
-An out-of-memory condition during snapshot creation will abort the request;
-the old disk-based approach tolerated larger databases by spilling to swap.
+**OOM protection:** The in-memory snapshot can be hundreds of MB for large
+message databases. To prevent out-of-memory failures, the helper checks
+`chat.db` size before attempting the snapshot. The default limit is **500 MB**;
+databases exceeding this size are rejected with a clear error message.
+Operators with larger databases must explicitly raise the limit by setting
+`IMESSAGE_SNAPSHOT_MAX_MB` (integer megabytes) and ensuring adequate physical
+memory is available. An OOM during snapshot creation aborts the request
+without leaving artifacts behind. Invalid or zero limit values fail closed
+at the 500 MB default.
 
 The snapshot exists only during the processing of a single request and is
 closed immediately after the response is written. An abnormal exit (OOM or

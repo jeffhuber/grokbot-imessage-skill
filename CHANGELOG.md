@@ -6,6 +6,18 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.2 - 2026-09-12
+
+- Snapshot OOM hardening: Add size guard before in-memory `chat.db` snapshot.
+  Default limit is 500 MB; override with `IMESSAGE_SNAPSHOT_MAX_MB` (integer
+  megabytes). Databases exceeding the limit are rejected with a clear error
+  message instead of causing OOM. Invalid or zero values fail closed at the
+  default.
+- Documentation: Expanded `docs/RELEASING.md` with GPG key generation, GitHub
+  setup, and git tag signing configuration for maintainers preparing signed
+  releases. Added optional `tools/cut-release.sh` script to streamline local
+  tag creation with pre-flight checks.
+
 ## 1.4.1 - 2026-09-12
 
 - Security hardening: Batch A (request/response atomicity, bounded retention,

@@ -113,7 +113,7 @@ _PRODUCT_ENV_VARS = (
 )
 WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
-HELPER_VERSION = "1.4.1"
+HELPER_VERSION = "1.4.2"
 PROTOCOL_VERSION = "1.2"
 
 # Bridge role. The DIY install and every host bridge run as "host". A
@@ -211,6 +211,11 @@ MAX_DAYS = 90
 MAX_HOURS = 24 * 30
 MAX_LIMIT = 500
 MAX_SEARCH_LEN = 200
+# Snapshot size guard: in-memory snapshots exceeding this limit are rejected.
+# Override with IMESSAGE_SNAPSHOT_MAX_MB. 500 MB fits typical chat.db sizes
+# while avoiding OOM on resource-constrained systems. Operators with larger
+# databases should review memory availability before raising this limit.
+DEFAULT_SNAPSHOT_MAX_MB = 500
 # list_chats has its own window: it returns no bodies, only which threads
 # exist, so a multi-year window is safe and useful for policy discovery.
 MAX_LIST_CHATS_DAYS = 3650
@@ -1215,15 +1220,55 @@ def _run_send_confirmation(
 # ---------------------------------------------------------------------------
 # DB handling
 # ---------------------------------------------------------------------------
+def _get_snapshot_max_bytes() -> int:
+    """Return the configured snapshot size limit in bytes.
+    
+    Reads IMESSAGE_SNAPSHOT_MAX_MB (integer megabytes) or falls back to
+    DEFAULT_SNAPSHOT_MAX_MB. Invalid values fail closed at the default.
+    """
+    env_value = os.environ.get("IMESSAGE_SNAPSHOT_MAX_MB", "").strip()
+    if not env_value:
+        return DEFAULT_SNAPSHOT_MAX_MB * 1024 * 1024
+    try:
+        mb = int(env_value)
+        if mb <= 0:
+            log(f"IMESSAGE_SNAPSHOT_MAX_MB={mb} invalid; using default {DEFAULT_SNAPSHOT_MAX_MB} MB")
+            return DEFAULT_SNAPSHOT_MAX_MB * 1024 * 1024
+        return mb * 1024 * 1024
+    except ValueError:
+        log(f"IMESSAGE_SNAPSHOT_MAX_MB={env_value!r} invalid; using default {DEFAULT_SNAPSHOT_MAX_MB} MB")
+        return DEFAULT_SNAPSHOT_MAX_MB * 1024 * 1024
+
+
 def copy_chatdb() -> sqlite3.Connection:
     """Copy chat.db to an in-memory snapshot using SQLite's backup API.
     
     Returns an open connection to the in-memory snapshot. The caller is
     responsible for closing the connection. This eliminates same-UID disk
     exposure: the snapshot exists only in this process's memory space.
+    
+    Raises RuntimeError if chat.db exceeds the configured size limit
+    (IMESSAGE_SNAPSHOT_MAX_MB, default 500 MB). Large databases can cause
+    OOM during the in-memory snapshot; operators should ensure adequate
+    memory before raising the limit.
     """
     if not CHAT_DB_PATH.exists():
         raise RuntimeError(f"chat.db not found at {CHAT_DB_PATH}")
+    
+    # Check size before attempting snapshot to fail fast on OOM risk
+    try:
+        db_size = CHAT_DB_PATH.stat().st_size
+    except OSError as e:
+        raise RuntimeError(f"cannot stat chat.db: {e}") from e
+    
+    max_bytes = _get_snapshot_max_bytes()
+    if db_size > max_bytes:
+        max_mb = max_bytes // (1024 * 1024)
+        actual_mb = db_size // (1024 * 1024)
+        raise RuntimeError(
+            f"chat.db size ({actual_mb} MB) exceeds snapshot limit ({max_mb} MB); "
+            f"set IMESSAGE_SNAPSHOT_MAX_MB to a higher value or archive old messages"
+        )
     
     source = None
     destination = None

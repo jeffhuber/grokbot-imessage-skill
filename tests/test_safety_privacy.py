@@ -472,6 +472,66 @@ class SensitiveArtifactTests(unittest.TestCase):
         self.assertEqual(plist.count("<string>/dev/null</string>"), 2)
 
 
+class SnapshotSizeGuardTests(BridgeDirMixin, unittest.TestCase):
+    """Snapshot OOM hardening: size guard before in-memory copy."""
+
+    def test_default_snapshot_limit(self) -> None:
+        """Default limit is 500 MB when env var is not set."""
+        self.assertEqual(helper._get_snapshot_max_bytes(), 500 * 1024 * 1024)
+
+    def test_env_override_snapshot_limit(self) -> None:
+        """IMESSAGE_SNAPSHOT_MAX_MB overrides the default."""
+        with mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "1000"}):
+            self.assertEqual(helper._get_snapshot_max_bytes(), 1000 * 1024 * 1024)
+
+    def test_invalid_env_uses_default(self) -> None:
+        """Invalid IMESSAGE_SNAPSHOT_MAX_MB falls back to default."""
+        for bad_value in ("abc", "-100", "0", ""):
+            with self.subTest(value=bad_value):
+                with mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": bad_value}):
+                    self.assertEqual(helper._get_snapshot_max_bytes(), 500 * 1024 * 1024)
+
+    def test_oversized_chatdb_rejected(self) -> None:
+        """chat.db exceeding the limit raises RuntimeError before snapshot."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            tmp_path = Path(tmp.name)
+            # Write 10 MB + 1 byte
+            tmp.write(b"x" * (10 * 1024 * 1024 + 1))
+        
+        self.addCleanup(tmp_path.unlink)
+        
+        with mock.patch.object(helper, "CHAT_DB_PATH", tmp_path), \
+             mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "10"}):
+            with self.assertRaisesRegex(RuntimeError, r"chat\.db size \(10 MB\) exceeds snapshot limit \(10 MB\)"):
+                helper.copy_chatdb()
+
+    def test_undersized_chatdb_accepted(self) -> None:
+        """chat.db under the limit proceeds to snapshot."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
+            tmp_path = Path(tmp.name)
+            # Create a minimal valid SQLite database
+            conn = helper.sqlite3.connect(str(tmp_path))
+            conn.execute("CREATE TABLE test (id INTEGER)")
+            conn.commit()
+            conn.close()
+        
+        self.addCleanup(tmp_path.unlink)
+        
+        with mock.patch.object(helper, "CHAT_DB_PATH", tmp_path), \
+             mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": "1"}):
+            # Should not raise; the db is well under 1 MB
+            snapshot = helper.copy_chatdb()
+            self.addCleanup(snapshot.close)
+            # Verify it's a working connection
+            cursor = snapshot.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = [row[0] for row in cursor.fetchall()]
+            # Snapshot has text_factory = bytes, so decode
+            if tables and isinstance(tables[0], bytes):
+                tables = [t.decode('utf-8') for t in tables]
+            self.assertIn("test", tables)
+
+
 class Core5aTests(unittest.TestCase):
     """CORE-5a follow-ups: read_policy ownership, root/uid precedence, send_gate check, env-plumbing."""
 
