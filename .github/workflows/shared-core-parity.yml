@@ -19,7 +19,21 @@ permissions:
   contents: read
 
 jobs:
+  # Self-check: validates Grok's files against its own manifest on every push
+  self-check:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Grok Bot repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify shared core against local manifest
+        run: python3 tools/check_shared_core.py
+
+  # Cross-repo comparison: checks all three siblings for drift (manual and scheduled only)
   compare:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Check out Grok Bot repository
@@ -39,5 +53,5 @@ jobs:
           repository: jeffhuber/chatgpt-codex-imessage-plugin
           path: chatgpt
           persist-credentials: false
-      - name: Compare security-critical shared core
+      - name: Compare security-critical shared core across siblings
         run: python3 grok/tools/check_shared_core.py claude grok chatgpt
