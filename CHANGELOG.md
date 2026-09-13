@@ -6,6 +6,16 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.8 - 2026-09-13
+
+- Fixed `configure_allowlist.py` to work with hardened install layout where the
+  allowlist parent directory is root-owned. The tool now stages its tempfile in
+  a user-owned private directory (under `/tmp`) instead of attempting to write
+  to the root-owned config directory, while maintaining all security checks and
+  using `sudo install` to atomically place the file in its final location.
+- Added tests to verify allowlist configuration works with root-owned parent
+  directories, preventing regression of the hardened-install staging bug.
+
 ## 1.4.7 - 2026-09-13
 
 - Raised default snapshot size limit from 500 MB to 1024 MB to accommodate
