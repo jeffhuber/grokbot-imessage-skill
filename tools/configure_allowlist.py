@@ -76,7 +76,22 @@ def install_entries(path: Path, entries: list[str]) -> None:
         if parent_canonical != expected_path.parent.resolve(strict=False):
             raise RuntimeError("allowlist parent directory mismatch")
     
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as handle:
+    # Create temp file in a private directory to avoid replacement race.
+    # Use the parent of the expected allowlist (user-controlled config dir).
+    temp_dir = path.parent
+    temp_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
+    fd = os.open(temp_dir, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        metadata = os.fstat(fd)
+        if metadata.st_uid != os.getuid():
+            raise RuntimeError("temp directory must be owned by current user")
+        if stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise RuntimeError("temp directory must not have group/world permissions")
+    finally:
+        os.close(fd)
+    
+    # Write to a tempfile in the private directory, not /tmp
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=temp_dir) as handle:
         handle.write(HEADER)
         for entry in sorted(set(entries), key=str.casefold):
             handle.write(f"{entry}\n")
