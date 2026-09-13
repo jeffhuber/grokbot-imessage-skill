@@ -175,6 +175,20 @@ print(module.ALLOWLIST_PATH)
         # Different group chat ID should not match
         self.assertFalse(helper.is_read_allowed("chat123ABCD", "", policy))
 
+    def test_non_phone_non_email_entries_match_exactly(self) -> None:
+        """Non-email, non-group entries lacking 10 digits should match exactly."""
+        # Odd allowlist tokens (e.g., short codes, special identifiers) should
+        # still match via exact case-insensitive comparison
+        policy = helper.PrivacyPolicy(
+            mode="allowlist", allowlist=("12345", "oddtoken"), blocklist=()
+        )
+        # "12345" has <10 digits, should match exactly (not via last-10)
+        self.assertTrue(helper.is_read_allowed("12345", "", policy))
+        self.assertFalse(helper.is_read_allowed("99912345", "", policy))
+        # "oddtoken" has no digits, should match exactly
+        self.assertTrue(helper.is_read_allowed("oddtoken", "", policy))
+        self.assertFalse(helper.is_read_allowed("oddtoken2", "", policy))
+
     def test_disallowed_contact_metadata_is_not_resolved(self) -> None:
         policy = helper.PrivacyPolicy(mode="allowlist", allowlist=(), blocklist=())
         contacts = {"alice@example.com": "Alice Example"}

@@ -894,13 +894,17 @@ def _matches_list(chat_id: str, sender: str, entries: tuple[str, ...] | list[str
         if "@" in entry and (lowered == cid.lower() or lowered == snd.lower()):
             return True
         
-        # Group chat ID or non-phone non-email: exact case-insensitive match
+        # Group chat ID: exact case-insensitive match (skip phone logic)
         if entry_is_group or cid_is_group or snd_is_group:
             if "@" not in entry and (lowered == cid.lower() or lowered == snd.lower()):
                 return True
         # Phone number: match last 10 digits (only if none are group chat IDs)
         elif entry_l10 and (entry_l10 == cid_l10 or entry_l10 == snd_l10):
             return True
+        # Fallback: non-email, non-group entries lacking 10 digits match exactly
+        elif not entry_l10 and "@" not in entry:
+            if lowered == cid.lower() or lowered == snd.lower():
+                return True
     return False
 
 
