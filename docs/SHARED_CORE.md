@@ -10,14 +10,16 @@ SHA-256 fingerprints for the common checker, helper, send gate, native wrapper,
 and confirmation helper. Host identity and release version values in `helper.py`
 are normalized before hashing; no behavioral code is ignored.
 
-Every repository's CI runs:
+Every repository's CI validates its own files on every push:
 
 ```bash
 python3 tools/check_shared_core.py
 ```
 
-The Grok Bot repository also runs a scheduled comparison of all three public
-default branches. For a local cross-repository comparison, run:
+The Grok Bot repository also runs a scheduled (daily) and manual (workflow_dispatch)
+cross-repository comparison of all three public default branches. This full sibling
+comparison does NOT run on push, so Grok changes can land without waiting for
+siblings to sync. For a local cross-repository comparison, run:
 
 ```bash
 python3 /path/to/grokbot-imessage-skill/tools/check_shared_core.py \
