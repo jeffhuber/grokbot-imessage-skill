@@ -82,23 +82,24 @@ def install_entries(path: Path, entries: list[str]) -> None:
     # secure staging directory under /tmp with mode 0o700.
     temp_dir_path = tempfile.mkdtemp(prefix="grokbot-allowlist-", suffix=".tmp")
     temp_dir = Path(temp_dir_path)
-    fd = os.open(temp_dir, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        metadata = os.fstat(fd)
-        if metadata.st_uid != os.getuid():
-            raise RuntimeError("staging directory must be owned by current user")
-        if stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise RuntimeError("staging directory must not have group/world permissions")
-    finally:
-        os.close(fd)
     
-    # Write to a tempfile in the private staging directory
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=temp_dir) as handle:
-        handle.write(HEADER)
-        for entry in sorted(set(entries), key=str.casefold):
-            handle.write(f"{entry}\n")
-        temporary = Path(handle.name)
     try:
+        fd = os.open(temp_dir, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            metadata = os.fstat(fd)
+            if metadata.st_uid != os.getuid():
+                raise RuntimeError("staging directory must be owned by current user")
+            if stat.S_IMODE(metadata.st_mode) & 0o077:
+                raise RuntimeError("staging directory must not have group/world permissions")
+        finally:
+            os.close(fd)
+        
+        # Write to a tempfile in the private staging directory
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=temp_dir) as handle:
+            handle.write(HEADER)
+            for entry in sorted(set(entries), key=str.casefold):
+                handle.write(f"{entry}\n")
+            temporary = Path(handle.name)
         subprocess.run(
             [
                 "/usr/bin/sudo",
