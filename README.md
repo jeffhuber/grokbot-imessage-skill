@@ -389,7 +389,7 @@ the smoke test as the authoritative check of the wrapper's Full Disk Access.
 |---------|-------|-----|
 | No response files appear | FDA not granted | Grant FDA to the exact wrapper path printed by the installer |
 | `sqlite3.OperationalError` in logs | FDA not granted or stale | Re-add the wrapper in System Settings → Full Disk Access |
-| `chat.db size ... exceeds snapshot limit` | Database too large for in-memory snapshot | Set `IMESSAGE_SNAPSHOT_MAX_MB` to a higher value (default 500) or archive old messages. Edit `~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` and add `<key>IMESSAGE_SNAPSHOT_MAX_MB</key><string>1024</string>` under `EnvironmentVariables`, then reload the agent with `launchctl unload` and `launchctl load` |
+| `chat.db size ... exceeds snapshot limit` | Database too large for in-memory snapshot | Set `IMESSAGE_SNAPSHOT_MAX_MB` to a higher value (default 1024) or archive old messages. Edit `~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` and add `<key>IMESSAGE_SNAPSHOT_MAX_MB</key><string>2048</string>` under `EnvironmentVariables`, then reload the agent with `launchctl unload` and `launchctl load` |
 | Send fails on first attempt | Automation permission needed | Click **OK** on the macOS prompt; future sends will work |
 | `send gate: missing nonce` | Skill didn't call `send_preview` first | Report a bug—the skill should always preview before send |
 | Messages decode as empty | `attributedBody` parser failed | Check `control/log.txt` for unparseable blobs |

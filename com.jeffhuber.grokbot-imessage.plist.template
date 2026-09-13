@@ -48,13 +48,13 @@
     <key>PATH</key>
     <string>/usr/bin:/bin</string>
     <!--
-      Optional: Raise the in-memory snapshot size limit (default 500 MB).
+      Optional: Raise the in-memory snapshot size limit (default 1024 MB).
       Set IMESSAGE_SNAPSHOT_MAX_MB to the desired limit in megabytes.
       Ensure adequate physical memory is available before raising this.
-      Example for a 1024 MB limit (suitable for large chat databases):
+      Example for a 2048 MB limit (suitable for very large chat databases):
     -->
     <!-- <key>IMESSAGE_SNAPSHOT_MAX_MB</key> -->
-    <!-- <string>1024</string> -->
+    <!-- <string>2048</string> -->
   </dict>
 </dict>
 </plist>

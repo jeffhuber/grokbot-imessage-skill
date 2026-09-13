@@ -113,7 +113,7 @@ _PRODUCT_ENV_VARS = (
 )
 WRAPPER_MODE = "product" if any(v in os.environ for v in _PRODUCT_ENV_VARS) else "baked"
 
-HELPER_VERSION = "1.4.6"
+HELPER_VERSION = "1.4.7"
 PROTOCOL_VERSION = "1.2"
 
 # Bridge role. The DIY install and every host bridge run as "host". A
@@ -212,10 +212,10 @@ MAX_HOURS = 24 * 30
 MAX_LIMIT = 500
 MAX_SEARCH_LEN = 200
 # Snapshot size guard: in-memory snapshots exceeding this limit are rejected.
-# Override with IMESSAGE_SNAPSHOT_MAX_MB. 500 MB fits typical chat.db sizes
+# Override with IMESSAGE_SNAPSHOT_MAX_MB. 1024 MB fits typical chat.db sizes
 # while avoiding OOM on resource-constrained systems. Operators with larger
 # databases should review memory availability before raising this limit.
-DEFAULT_SNAPSHOT_MAX_MB = 500
+DEFAULT_SNAPSHOT_MAX_MB = 1024
 # list_chats has its own window: it returns no bodies, only which threads
 # exist, so a multi-year window is safe and useful for policy discovery.
 MAX_LIST_CHATS_DAYS = 3650
@@ -1263,7 +1263,7 @@ def copy_chatdb() -> sqlite3.Connection:
     exposure: the snapshot exists only in this process's memory space.
     
     Raises RuntimeError if chat.db + chat.db-wal exceeds the configured
-    size limit (IMESSAGE_SNAPSHOT_MAX_MB, default 500 MB). Large databases
+    size limit (IMESSAGE_SNAPSHOT_MAX_MB, default 1024 MB). Large databases
     can cause OOM during the in-memory snapshot; operators should ensure
     adequate memory before raising the limit. SQLite's backup API includes
     uncommitted WAL data in the snapshot, so both files count against the limit.
