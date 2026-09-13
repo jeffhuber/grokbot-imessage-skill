@@ -43,7 +43,9 @@ version reported by the `status` action.
   memory-only snapshots, send tempfile race fix, default-deny read allowlist),
   Batch B (nonce collision hardening, install-time validation, send-gate state
   isolation), and Batch C LOWs (enhanced diagnostics, pre-validation).
-- Privacy: Scrubbed contact names from git history and working tree.
+- Privacy: Scrubbed fictional contact examples from working tree documentation;
+  commit message scrub completed 2026-09-13 to replace real contact names with
+  fictional placeholders throughout repository history.
 - Documentation: Clarified group chat ID matching uses exact case-insensitive
   comparison (not substring matching) for blocklist and allowlist enforcement.
 - Repository cleanup: Removed history-rewrite inventory files after merge.
