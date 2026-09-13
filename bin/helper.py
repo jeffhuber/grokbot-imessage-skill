@@ -883,18 +883,24 @@ def _matches_list(chat_id: str, sender: str, entries: tuple[str, ...] | list[str
     snd_l10 = _last10(snd)
     for entry in entries:
         entry_l10 = _last10(entry)
-        # Phone number: match last 10 digits
-        if entry_l10 and (entry_l10 == cid_l10 or entry_l10 == snd_l10):
+        lowered = entry.lower()
+        # Group chat IDs (starting with "chat") must match exactly, never via last-10.
+        # This prevents "chat1234567890" from colliding with phone "+11234567890".
+        entry_is_group = lowered.startswith("chat")
+        cid_is_group = cid.lower().startswith("chat")
+        snd_is_group = snd.lower().startswith("chat")
+        
+        # Email: exact case-insensitive match
+        if "@" in entry and (lowered == cid.lower() or lowered == snd.lower()):
             return True
-        if not entry_l10:
-            lowered = entry.lower()
-            # Email: exact case-insensitive match
-            if "@" in entry and (lowered == cid.lower() or lowered == snd.lower()):
-                return True
-            # Group chat ID: exact case-insensitive match (not substring)
-            # to prevent "chat123" from matching "chat1234567890"
+        
+        # Group chat ID or non-phone non-email: exact case-insensitive match
+        if entry_is_group or cid_is_group or snd_is_group:
             if "@" not in entry and (lowered == cid.lower() or lowered == snd.lower()):
                 return True
+        # Phone number: match last 10 digits (only if none are group chat IDs)
+        elif entry_l10 and (entry_l10 == cid_l10 or entry_l10 == snd_l10):
+            return True
     return False
 
 

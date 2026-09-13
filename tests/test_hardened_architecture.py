@@ -142,6 +142,39 @@ print(module.ALLOWLIST_PATH)
         self.assertTrue(helper.is_read_allowed("alice@example.com", "", policy))
         self.assertFalse(helper.is_read_allowed("alice@example.com.evil", "", policy))
 
+    def test_group_chat_ids_must_not_match_via_phone_last10(self) -> None:
+        """Group chat IDs with 10+ digits must not collide with phone numbers."""
+        # Group chat ID "chat1234567890" contains 10 digits, but should NOT match
+        # phone number "+11234567890" via last-10 logic
+        policy = helper.PrivacyPolicy(
+            mode="allowlist", allowlist=("+11234567890",), blocklist=()
+        )
+        # Phone number should match itself
+        self.assertTrue(helper.is_read_allowed("+11234567890", "+11234567890", policy))
+        # Group chat ID with same last 10 digits must NOT match the phone allowlist entry
+        self.assertFalse(helper.is_read_allowed("chat1234567890", "", policy))
+        self.assertFalse(helper.is_read_allowed("", "chat1234567890", policy))
+        
+        # Reverse: group chat ID in allowlist should not match phone with same digits
+        policy_group = helper.PrivacyPolicy(
+            mode="allowlist", allowlist=("chat1234567890",), blocklist=()
+        )
+        # Group chat ID should match itself exactly
+        self.assertTrue(helper.is_read_allowed("chat1234567890", "", policy_group))
+        # Phone with same last 10 digits must NOT match the group chat allowlist entry
+        self.assertFalse(helper.is_read_allowed("+11234567890", "+11234567890", policy_group))
+
+    def test_group_chat_ids_match_exactly_case_insensitive(self) -> None:
+        """Group chat IDs still match exactly, case-insensitively."""
+        policy = helper.PrivacyPolicy(
+            mode="allowlist", allowlist=("chat123ABC",), blocklist=()
+        )
+        # Exact match with different case should work
+        self.assertTrue(helper.is_read_allowed("chat123abc", "", policy))
+        self.assertTrue(helper.is_read_allowed("CHAT123ABC", "", policy))
+        # Different group chat ID should not match
+        self.assertFalse(helper.is_read_allowed("chat123ABCD", "", policy))
+
     def test_disallowed_contact_metadata_is_not_resolved(self) -> None:
         policy = helper.PrivacyPolicy(mode="allowlist", allowlist=(), blocklist=())
         contacts = {"alice@example.com": "Alice Example"}
@@ -417,6 +450,41 @@ class HardenedInstallerTests(unittest.TestCase):
         self.assertIn("{{CODE_ROOT}}/bin/grokbot-imessage-helper", template)
         self.assertIn("{{BRIDGE_ROOT}}/control/requests", template)
         self.assertNotIn("{{INSTALL_ROOT}}", template)
+
+    def test_allowlist_install_creates_tempfile_in_private_directory(self) -> None:
+        """Tempfile for allowlist install must be in a private directory, not /tmp."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-allowlist-temp-test-") as td:
+            product_root = Path(td)
+            product_root.chmod(0o700)
+            user_dir = product_root / "users" / str(os.getuid())
+            config_dir = user_dir / "config"
+            config_dir.mkdir(parents=True, mode=0o700)
+            allowlist = config_dir / "allowed_chats.txt"
+            
+            # Track where NamedTemporaryFile creates files
+            temp_locations = []
+            original_named_temp = tempfile.NamedTemporaryFile
+            
+            def track_tempfile(*args, **kwargs):
+                handle = original_named_temp(*args, **kwargs)
+                temp_locations.append(Path(handle.name).parent)
+                return handle
+            
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", product_root):
+                with mock.patch.object(tempfile, "NamedTemporaryFile", track_tempfile):
+                    # Mock subprocess.run to avoid actually calling sudo
+                    with mock.patch.object(subprocess, "run") as mock_run:
+                        mock_run.return_value = mock.Mock(returncode=0)
+                        try:
+                            configure_allowlist.install_entries(allowlist, ["+14155551234"])
+                        except Exception:
+                            pass  # We're only testing where the temp file was created
+            
+            # Verify the temp file was created in the config directory, not /tmp
+            self.assertEqual(len(temp_locations), 1)
+            temp_parent = temp_locations[0]
+            self.assertEqual(os.path.realpath(temp_parent), os.path.realpath(config_dir))
+            self.assertNotEqual(temp_parent, Path("/tmp"))
 
 
 if __name__ == "__main__":
