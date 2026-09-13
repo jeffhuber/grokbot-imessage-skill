@@ -7,8 +7,8 @@ __pycache__/
 .DS_Store
 
 # Build artifacts (per-machine — users build locally via install.sh)
-bin/cowork-imessage-helper
-bin/confirm-imessage-send
+bin/grokbot-imessage-helper
+bin/grokbot-imessage-confirm
 *.plugin
 
 # Runtime state (created by install.sh or helper)

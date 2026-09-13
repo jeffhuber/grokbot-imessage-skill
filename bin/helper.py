@@ -9,7 +9,7 @@ and deletes the request.
 Security posture:
   - Actions are strictly whitelisted (no eval/exec/shell-out).
   - All SQL uses parameterized queries.
-  - chat.db is copied to a per-run tempfile (cleaned up on exit).
+  - chat.db is snapshotted to an in-memory database using SQLite's backup API.
   - Read policy is applied before any message text is returned.
   - 2FA codes, card numbers, and SSN patterns are redacted in responses.
   - Response writes are atomic (tmp + rename) so the agent never reads a
