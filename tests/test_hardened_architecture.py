@@ -189,6 +189,34 @@ print(module.ALLOWLIST_PATH)
         self.assertTrue(helper.is_read_allowed("oddtoken", "", policy))
         self.assertFalse(helper.is_read_allowed("oddtoken2", "", policy))
 
+    def test_blocklist_formatted_phone_in_group_chat_blocks_sender(self) -> None:
+        """Blocklist phone entry must match formatted sender in group chats."""
+        # Blocklist has canonical phone, group chat has formatted sender
+        policy = helper.PrivacyPolicy(
+            mode="blocklist", allowlist=(), blocklist=("+14155551234",)
+        )
+        # Group chat ID should not match the phone entry
+        self.assertFalse(helper.is_blocked("chat123", "", policy))
+        # Formatted sender phone should match the canonical blocklist entry
+        self.assertTrue(helper.is_blocked("chat123", "+1-415-555-1234", policy))
+        self.assertTrue(helper.is_blocked("chat123", "(415) 555-1234", policy))
+        # Different phone should not match
+        self.assertFalse(helper.is_blocked("chat123", "+14155559999", policy))
+
+    def test_allowlist_formatted_phone_in_group_chat_allows_sender(self) -> None:
+        """Allowlist phone entry must match formatted sender in group chats."""
+        # Allowlist has canonical phone, group chat has formatted sender
+        policy = helper.PrivacyPolicy(
+            mode="allowlist", allowlist=("+14155551234",), blocklist=()
+        )
+        # Group chat ID should not match the phone entry (not in allowlist)
+        self.assertFalse(helper.is_read_allowed("chat123", "", policy))
+        # Formatted sender phone should match the canonical allowlist entry
+        self.assertTrue(helper.is_read_allowed("chat123", "+1-415-555-1234", policy))
+        self.assertTrue(helper.is_read_allowed("chat123", "(415) 555-1234", policy))
+        # Different phone should not match
+        self.assertFalse(helper.is_read_allowed("chat123", "+14155559999", policy))
+
     def test_disallowed_contact_metadata_is_not_resolved(self) -> None:
         policy = helper.PrivacyPolicy(mode="allowlist", allowlist=(), blocklist=())
         contacts = {"alice@example.com": "Alice Example"}
