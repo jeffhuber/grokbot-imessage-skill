@@ -272,12 +272,12 @@ confidentiality against a same-UID attacker with debugging access.
 message databases. To prevent out-of-memory failures, the helper checks
 `chat.db` + `chat.db-wal` size before attempting the snapshot. SQLite's backup
 API includes uncommitted WAL data in the snapshot, so both files count against
-the limit. The default limit is **500 MB**; databases exceeding this size are
+the limit. The default limit is **1024 MB**; databases exceeding this size are
 rejected with a clear error message. Operators with larger databases must
 explicitly raise the limit by setting `IMESSAGE_SNAPSHOT_MAX_MB` (integer
 megabytes) and ensuring adequate physical memory is available. An OOM during
 snapshot creation aborts the request without leaving artifacts behind. Invalid
-or zero limit values fail closed at the 500 MB default.
+or zero limit values fail closed at the 1024 MB default.
 
 To raise the limit, add the environment variable to the LaunchAgent plist. Edit
 `~/Library/LaunchAgents/com.jeffhuber.grokbot-imessage.plist` and add the key

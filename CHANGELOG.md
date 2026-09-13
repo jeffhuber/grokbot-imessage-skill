@@ -6,6 +6,14 @@ version reported by the `status` action.
 
 ## Unreleased
 
+## 1.4.7 - 2026-09-13
+
+- Raised default snapshot size limit from 500 MB to 1024 MB to accommodate
+  larger local chat.db files without manual override. Claude's review identified
+  the 500 MB ceiling as the main remaining UX complaint for users with large
+  message histories (~600 MB databases). Override remains available via
+  `IMESSAGE_SNAPSHOT_MAX_MB` environment variable for even larger databases.
+
 ## 1.4.6 - 2026-09-13
 
 - Version bump for signed installable GitHub release with checksummed assets.

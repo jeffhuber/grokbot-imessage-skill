@@ -476,8 +476,8 @@ class SnapshotSizeGuardTests(BridgeDirMixin, unittest.TestCase):
     """Snapshot OOM hardening: size guard before in-memory copy."""
 
     def test_default_snapshot_limit(self) -> None:
-        """Default limit is 500 MB when env var is not set."""
-        self.assertEqual(helper._get_snapshot_max_bytes(), 500 * 1024 * 1024)
+        """Default limit is 1024 MB when env var is not set."""
+        self.assertEqual(helper._get_snapshot_max_bytes(), 1024 * 1024 * 1024)
 
     def test_env_override_snapshot_limit(self) -> None:
         """IMESSAGE_SNAPSHOT_MAX_MB overrides the default."""
@@ -489,7 +489,7 @@ class SnapshotSizeGuardTests(BridgeDirMixin, unittest.TestCase):
         for bad_value in ("abc", "-100", "0", ""):
             with self.subTest(value=bad_value):
                 with mock.patch.dict(os.environ, {"IMESSAGE_SNAPSHOT_MAX_MB": bad_value}):
-                    self.assertEqual(helper._get_snapshot_max_bytes(), 500 * 1024 * 1024)
+                    self.assertEqual(helper._get_snapshot_max_bytes(), 1024 * 1024 * 1024)
 
     def test_oversized_chatdb_rejected(self) -> None:
         """chat.db exceeding the limit raises RuntimeError before snapshot."""
