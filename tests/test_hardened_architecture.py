@@ -494,7 +494,7 @@ class HardenedInstallerTests(unittest.TestCase):
         self.assertNotIn("{{INSTALL_ROOT}}", template)
 
     def test_allowlist_install_creates_tempfile_in_private_directory(self) -> None:
-        """Tempfile for allowlist install must be in a private directory, not /tmp."""
+        """Tempfile for allowlist install must be in a user-owned private directory."""
         with tempfile.TemporaryDirectory(prefix="grokbot-allowlist-temp-test-") as td:
             product_root = Path(td)
             product_root.chmod(0o700)
@@ -505,28 +505,89 @@ class HardenedInstallerTests(unittest.TestCase):
             
             # Track where NamedTemporaryFile creates files
             temp_locations = []
+            staging_dirs = []
             original_named_temp = tempfile.NamedTemporaryFile
+            original_mkdtemp = tempfile.mkdtemp
             
             def track_tempfile(*args, **kwargs):
                 handle = original_named_temp(*args, **kwargs)
                 temp_locations.append(Path(handle.name).parent)
                 return handle
             
+            def track_mkdtemp(*args, **kwargs):
+                dir_path = original_mkdtemp(*args, **kwargs)
+                staging_dirs.append(Path(dir_path))
+                return dir_path
+            
             with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", product_root):
                 with mock.patch.object(tempfile, "NamedTemporaryFile", track_tempfile):
+                    with mock.patch.object(tempfile, "mkdtemp", track_mkdtemp):
+                        # Mock subprocess.run to avoid actually calling sudo
+                        with mock.patch.object(subprocess, "run") as mock_run:
+                            mock_run.return_value = mock.Mock(returncode=0)
+                            try:
+                                configure_allowlist.install_entries(allowlist, ["+14155551234"])
+                            except Exception:
+                                pass  # We're only testing where the temp file was created
+            
+            # Verify a staging directory was created
+            self.assertEqual(len(staging_dirs), 1)
+            staging_dir = staging_dirs[0]
+            
+            # Verify the temp file was created in the staging directory
+            self.assertEqual(len(temp_locations), 1)
+            temp_parent = temp_locations[0]
+            self.assertEqual(temp_parent, staging_dir)
+            
+            # Verify staging directory is NOT the config directory
+            self.assertNotEqual(os.path.realpath(staging_dir), os.path.realpath(config_dir))
+    
+    def test_allowlist_install_works_with_root_owned_parent(self) -> None:
+        """Allowlist install must work when destination parent is root-owned."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-hardened-test-") as td:
+            # Simulate hardened install layout: root-owned parent directory
+            product_root = Path(td)
+            user_dir = product_root / "users" / str(os.getuid())
+            config_dir = user_dir / "config"
+            config_dir.mkdir(parents=True, mode=0o755)
+            allowlist = config_dir / "allowed_chats.txt"
+            
+            # Simulate root-owned parent (we can't actually make it root-owned in tests,
+            # but we can verify the staging directory is separate)
+            staging_dirs = []
+            original_mkdtemp = tempfile.mkdtemp
+            
+            def track_mkdtemp(*args, **kwargs):
+                dir_path = original_mkdtemp(*args, **kwargs)
+                staging_dirs.append(Path(dir_path))
+                return dir_path
+            
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", product_root):
+                with mock.patch.object(tempfile, "mkdtemp", track_mkdtemp):
                     # Mock subprocess.run to avoid actually calling sudo
                     with mock.patch.object(subprocess, "run") as mock_run:
                         mock_run.return_value = mock.Mock(returncode=0)
                         try:
                             configure_allowlist.install_entries(allowlist, ["+14155551234"])
-                        except Exception:
-                            pass  # We're only testing where the temp file was created
+                        except Exception as e:
+                            # Only propagate if it's not a cleanup-related error
+                            if "staging directory" in str(e).lower():
+                                raise
             
-            # Verify the temp file was created in the config directory, not /tmp
-            self.assertEqual(len(temp_locations), 1)
-            temp_parent = temp_locations[0]
-            self.assertEqual(os.path.realpath(temp_parent), os.path.realpath(config_dir))
-            self.assertNotEqual(temp_parent, Path("/tmp"))
+            # Verify a separate staging directory was created
+            self.assertEqual(len(staging_dirs), 1)
+            staging_dir = staging_dirs[0]
+            
+            # Verify staging directory is NOT the root-owned config directory
+            self.assertNotEqual(staging_dir, config_dir)
+            self.assertNotEqual(staging_dir.parent, config_dir)
+            
+            # Verify staging directory is in /tmp or similar temporary location
+            self.assertTrue(
+                str(staging_dir).startswith("/tmp/") or 
+                str(staging_dir).startswith(str(tempfile.gettempdir())),
+                f"Staging dir {staging_dir} should be in temp location"
+            )
 
 
 if __name__ == "__main__":
