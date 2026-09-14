@@ -10,6 +10,8 @@ This is an independent open-source project by Jeff Huber. It is not made,
 endorsed, or supported by Apple or xAI. Report vulnerabilities privately as
 described in [SECURITY.md](./SECURITY.md).
 
+> **Prefer a Mac app?** A commercial alternative with drag-and-drop installation and automatic updates is available at [messagebridge.app](https://messagebridge.app).
+
 ---
 
 ## What This Does
