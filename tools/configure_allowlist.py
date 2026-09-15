@@ -64,6 +64,10 @@ def install_entries(path: Path, entries: list[str]) -> None:
     if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
     
+    # Compute unresolved absolute expected paths for comparison
+    expected_abs = Path(os.path.abspath(str(expected_path)))
+    expected_parent_abs = Path(os.path.abspath(str(expected_path.parent)))
+    
     # Pre-install symlink check: reject if path exists and is a symlink
     if path.exists():
         if path.is_symlink():
@@ -72,9 +76,25 @@ def install_entries(path: Path, entries: list[str]) -> None:
         if os.path.abspath(str(path)) != os.path.realpath(str(path)):
             raise RuntimeError("allowlist path must not be a symlink")
     else:
-        # Path doesn't exist yet - verify parent is what we expect
+        # Path doesn't exist yet - verify parent is what we expect.
+        # Use O_NOFOLLOW to validate parent components securely.
+        try:
+            parent_fd = os.open(
+                str(path.parent),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                parent_stat = os.fstat(parent_fd)
+                if not stat.S_ISDIR(parent_stat.st_mode):
+                    raise RuntimeError("allowlist parent is not a directory")
+            finally:
+                os.close(parent_fd)
+        except OSError as exc:
+            raise RuntimeError(f"allowlist parent validation failed: {exc}")
+        
+        # Compare resolved parent against unresolved absolute expected parent
         parent_canonical = path.parent.resolve(strict=False)
-        if parent_canonical != expected_path.parent.resolve(strict=False):
+        if parent_canonical != expected_parent_abs:
             raise RuntimeError("allowlist parent directory mismatch")
     
     # Create temp file in a user-owned private directory to avoid replacement race.
@@ -123,8 +143,9 @@ def install_entries(path: Path, entries: list[str]) -> None:
                 raise RuntimeError("installed allowlist is not a regular file")
             if os.path.abspath(str(path)) != os.path.realpath(str(path)):
                 raise RuntimeError("installed allowlist is a symlink")
+            # Compare resolved path against unresolved absolute expected path
             post_install_canonical = path.resolve(strict=True)
-            if post_install_canonical != expected_path.resolve(strict=False):
+            if post_install_canonical != expected_abs:
                 raise RuntimeError("allowlist was not created at expected location")
         except OSError as e:
             raise RuntimeError(f"allowlist verification failed: {e}")

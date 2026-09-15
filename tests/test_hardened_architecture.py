@@ -588,6 +588,77 @@ class HardenedInstallerTests(unittest.TestCase):
                 str(staging_dir).startswith(str(tempfile.gettempdir())),
                 f"Staging dir {staging_dir} should be in temp location"
             )
+    
+    def test_allowlist_install_rejects_symlinked_parent_path(self) -> None:
+        """Allowlist parent validation must reject symlinked parent directories."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-symlink-test-") as td:
+            root = Path(td)
+            # Create real directory structure
+            real_product = root / "real_product"
+            real_users = real_product / "users" / str(os.getuid())
+            real_config = real_users / "config"
+            real_config.mkdir(parents=True, mode=0o700)
+            
+            # Create symlink to the real product root
+            symlink_product = root / "symlink_product"
+            symlink_product.symlink_to(real_product)
+            
+            # Construct allowlist path through the symlink
+            symlink_allowlist = symlink_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
+            
+            # The allowlist doesn't exist yet, so the parent validation will run
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", symlink_product):
+                with self.assertRaises(RuntimeError) as ctx:
+                    # Mock subprocess to avoid actual sudo call, but we should fail before that
+                    with mock.patch.object(subprocess, "run") as mock_run:
+                        mock_run.return_value = mock.Mock(returncode=0)
+                        configure_allowlist.install_entries(symlink_allowlist, ["+14155551234"])
+            
+            # Verify it was rejected due to parent path mismatch
+            self.assertIn("parent", str(ctx.exception).lower())
+    
+    def test_allowlist_install_rejects_symlink_in_expected_path(self) -> None:
+        """Post-install validation must detect when file is created via symlinked path."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-symlink-post-test-") as td:
+            root = Path(td)
+            # Create real directory structure
+            real_product = root / "real_product"
+            real_users = real_product / "users" / str(os.getuid())
+            real_config = real_users / "config"
+            real_config.mkdir(parents=True, mode=0o700)
+            
+            # Create symlink at intermediate level (users directory)
+            symlink_product = root / "symlink_product"
+            symlink_product.mkdir()
+            (symlink_product / "users").symlink_to(real_users)
+            
+            # Construct allowlist path through the symlink
+            symlink_allowlist = symlink_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
+            
+            # Create a pre-existing allowlist file so parent validation is skipped
+            # Ensure the parent directory exists through the symlink
+            symlink_allowlist.parent.mkdir(parents=True, exist_ok=True)
+            symlink_allowlist.write_text("# existing\n")
+            
+            def mock_sudo_install(*args, **kwargs):
+                # Simulate sudo install creating/updating the file
+                real_allowlist = real_config / "allowed_chats.txt"
+                real_allowlist.write_text("# test\n+14155551234\n")
+                real_allowlist.chmod(0o600)
+                return mock.Mock(returncode=0)
+            
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", symlink_product):
+                with self.assertRaises(RuntimeError) as ctx:
+                    with mock.patch.object(subprocess, "run") as mock_run:
+                        mock_run.side_effect = mock_sudo_install
+                        configure_allowlist.install_entries(symlink_allowlist, ["+14155551234"])
+            
+            # Verify validation caught the symlink issue (either pre-install or post-install)
+            error_msg = str(ctx.exception).lower()
+            self.assertTrue(
+                "symlink" in error_msg or "location" in error_msg,
+                f"Expected symlink or location error, got: {ctx.exception}"
+            )
 
 
 if __name__ == "__main__":
