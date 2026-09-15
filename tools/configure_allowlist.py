@@ -25,6 +25,28 @@ EMAIL_RE = re.compile(
 CHAT_RE = re.compile(r"^chat[A-Za-z0-9;_+.-]+$")
 
 
+def _normalize_macos_firmlinks(path: str) -> str:
+    """Normalize macOS firmlinks without following user symlinks.
+    
+    On macOS, /var and /tmp are firmlinks to /private/var and /private/tmp.
+    This function normalizes these OS-managed paths without resolving user symlinks.
+    Only applies normalization if the firmlink actually exists on the system.
+    """
+    # Check /var firmlink
+    if (path.startswith("/var/") or path == "/var") and os.path.exists("/private/var"):
+        # Only normalize if /var actually resolves to /private/var on this system
+        if os.path.realpath("/var") == "/private/var":
+            return ("/private" + path) if path.startswith("/var/") else "/private/var"
+    
+    # Check /tmp firmlink  
+    if (path.startswith("/tmp/") or path == "/tmp") and os.path.exists("/private/tmp"):
+        # Only normalize if /tmp actually resolves to /private/tmp on this system
+        if os.path.realpath("/tmp") == "/private/tmp":
+            return ("/private" + path) if path.startswith("/tmp/") else "/private/tmp"
+    
+    return path
+
+
 def allowlist_path() -> Path:
     return PRODUCT_ROOT / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
 
@@ -64,11 +86,16 @@ def install_entries(path: Path, entries: list[str]) -> None:
     if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
     
-    # Compute unresolved absolute expected paths for comparison.
-    # Use realpath to normalize macOS firmlinks (/var ↔ /private/var) but preserve
-    # the expected path structure from PRODUCT_ROOT constant (catches symlink attacks).
-    expected_abs = os.path.realpath(str(os.path.abspath(str(expected_path))))
-    expected_parent_abs = os.path.realpath(str(os.path.abspath(str(expected_path.parent))))
+    # Reject if PRODUCT_ROOT itself is a symlink
+    if PRODUCT_ROOT.exists() and PRODUCT_ROOT.is_symlink():
+        raise RuntimeError("PRODUCT_ROOT must not be a symlink")
+    
+    # Compute unresolved absolute expected paths with firmlink-only normalization.
+    # Uses abspath (not realpath) to avoid following user symlinks in PRODUCT_ROOT,
+    # then normalizes only OS-managed firmlinks (/var ↔ /private/var, /tmp ↔ /private/tmp).
+    # This catches attacks where PRODUCT_ROOT or subdirs are symlinked.
+    expected_abs = _normalize_macos_firmlinks(os.path.abspath(str(expected_path)))
+    expected_parent_abs = _normalize_macos_firmlinks(os.path.abspath(str(expected_path.parent)))
     
     # Pre-install symlink check: reject if path exists and is a symlink
     if path.exists():

@@ -590,8 +590,8 @@ class HardenedInstallerTests(unittest.TestCase):
             )
     
     def test_allowlist_install_rejects_symlinked_parent_path(self) -> None:
-        """Allowlist parent validation must reject symlinked parent directories."""
-        with tempfile.TemporaryDirectory(prefix="grokbot-symlink-test-") as td:
+        """Allowlist parent validation must reject symlinked PRODUCT_ROOT."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-test-") as td:
             root = Path(td)
             # Create real directory structure
             real_product = root / "real_product"
@@ -599,31 +599,27 @@ class HardenedInstallerTests(unittest.TestCase):
             real_config = real_users / "config"
             real_config.mkdir(parents=True, mode=0o700)
             
-            # Create symlink to the real product root
-            symlink_product = root / "symlink_product"
-            symlink_product.symlink_to(real_product)
+            # Create decoy that symlinks to the real product root
+            decoy_product = root / "decoy_product"
+            decoy_product.symlink_to(real_product)
             
-            # Construct allowlist path through the symlink
-            symlink_allowlist = symlink_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
+            # Construct allowlist path through the decoy
+            decoy_allowlist = decoy_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
             
             # The allowlist doesn't exist yet, so the parent validation will run
-            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", symlink_product):
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", decoy_product):
                 with self.assertRaises(RuntimeError) as ctx:
                     # Mock subprocess to avoid actual sudo call, but we should fail before that
                     with mock.patch.object(subprocess, "run") as mock_run:
                         mock_run.return_value = mock.Mock(returncode=0)
-                        configure_allowlist.install_entries(symlink_allowlist, ["+14155551234"])
+                        configure_allowlist.install_entries(decoy_allowlist, ["+14155551234"])
             
-            # Verify it was rejected due to symlinked path (parent or PRODUCT_ROOT)
-            error_msg = str(ctx.exception).lower()
-            self.assertTrue(
-                "parent" in error_msg or "product_root" in error_msg or "symlink" in error_msg,
-                f"Expected path validation error, got: {ctx.exception}"
-            )
+            # Verify it was rejected with specific PRODUCT_ROOT symlink error
+            self.assertEqual(str(ctx.exception), "PRODUCT_ROOT must not be a symlink")
     
-    def test_allowlist_install_rejects_symlink_in_expected_path(self) -> None:
-        """Post-install validation must detect when file is created via symlinked path."""
-        with tempfile.TemporaryDirectory(prefix="grokbot-symlink-post-test-") as td:
+    def test_allowlist_install_rejects_symlink_in_subdirectory(self) -> None:
+        """Parent validation must detect symlinks in subdirectory structure."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-test-") as td:
             root = Path(td)
             # Create real directory structure
             real_product = root / "real_product"
@@ -631,38 +627,60 @@ class HardenedInstallerTests(unittest.TestCase):
             real_config = real_users / "config"
             real_config.mkdir(parents=True, mode=0o700)
             
-            # Create symlink at intermediate level (users directory)
-            symlink_product = root / "symlink_product"
-            symlink_product.mkdir()
-            (symlink_product / "users").symlink_to(real_users)
+            # Create alt product with symlinked users directory
+            alt_product = root / "alt_product"
+            alt_product.mkdir()
+            (alt_product / "users").symlink_to(real_users)
             
-            # Construct allowlist path through the symlink
-            symlink_allowlist = symlink_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
+            # Construct allowlist path through the symlinked subdir
+            alt_allowlist = alt_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
             
-            # Create a pre-existing allowlist file so parent validation is skipped
-            # Ensure the parent directory exists through the symlink
-            symlink_allowlist.parent.mkdir(parents=True, exist_ok=True)
-            symlink_allowlist.write_text("# existing\n")
-            
-            def mock_sudo_install(*args, **kwargs):
-                # Simulate sudo install creating/updating the file
-                real_allowlist = real_config / "allowed_chats.txt"
-                real_allowlist.write_text("# test\n+14155551234\n")
-                real_allowlist.chmod(0o600)
-                return mock.Mock(returncode=0)
-            
-            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", symlink_product):
+            # PRODUCT_ROOT is not itself a symlink, but contains symlink in subdirectory
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", alt_product):
                 with self.assertRaises(RuntimeError) as ctx:
                     with mock.patch.object(subprocess, "run") as mock_run:
-                        mock_run.side_effect = mock_sudo_install
-                        configure_allowlist.install_entries(symlink_allowlist, ["+14155551234"])
+                        mock_run.return_value = mock.Mock(returncode=0)
+                        configure_allowlist.install_entries(alt_allowlist, ["+14155551234"])
             
-            # Verify validation caught the symlink issue (either pre-install or post-install)
-            error_msg = str(ctx.exception).lower()
+            # Verify it was rejected with specific parent mismatch error (O_NOFOLLOW or comparison)
+            error_msg = str(ctx.exception)
             self.assertTrue(
-                "symlink" in error_msg or "location" in error_msg,
-                f"Expected symlink or location error, got: {ctx.exception}"
+                "allowlist parent" in error_msg or "validation failed" in error_msg,
+                f"Expected parent validation error, got: {ctx.exception}"
             )
+    
+    def test_allowlist_parent_check_fails_before_sudo_when_product_root_symlinked(self) -> None:
+        """PRODUCT_ROOT symlink must fail-close on parent check, not post-install."""
+        with tempfile.TemporaryDirectory(prefix="grokbot-test-") as td:
+            root = Path(td)
+            # Create real directory structure
+            real_product = root / "real_product"
+            real_users = real_product / "users" / str(os.getuid())
+            real_config = real_users / "config"
+            real_config.mkdir(parents=True, mode=0o700)
+            
+            # Create decoy PRODUCT_ROOT that symlinks to real location
+            decoy_product = root / "decoy_product"
+            decoy_product.symlink_to(real_product)
+            
+            # Construct allowlist path through decoy (doesn't exist yet)
+            decoy_allowlist = decoy_product / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
+            
+            # Track whether sudo was called
+            sudo_called = False
+            def track_sudo(*args, **kwargs):
+                nonlocal sudo_called
+                sudo_called = True
+                return mock.Mock(returncode=0)
+            
+            with mock.patch.object(configure_allowlist, "PRODUCT_ROOT", decoy_product):
+                with self.assertRaises(RuntimeError) as ctx:
+                    with mock.patch.object(subprocess, "run", side_effect=track_sudo):
+                        configure_allowlist.install_entries(decoy_allowlist, ["+14155551234"])
+            
+            # Verify rejection happened BEFORE sudo (upfront PRODUCT_ROOT check)
+            self.assertFalse(sudo_called, "sudo should not be called when PRODUCT_ROOT is symlink")
+            self.assertEqual(str(ctx.exception), "PRODUCT_ROOT must not be a symlink")
 
 
 if __name__ == "__main__":
