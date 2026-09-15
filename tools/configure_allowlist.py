@@ -25,6 +25,28 @@ EMAIL_RE = re.compile(
 CHAT_RE = re.compile(r"^chat[A-Za-z0-9;_+.-]+$")
 
 
+def _normalize_macos_firmlinks(path: str) -> str:
+    """Normalize macOS firmlinks without following user symlinks.
+    
+    On macOS, /var and /tmp are firmlinks to /private/var and /private/tmp.
+    This function normalizes these OS-managed paths without resolving user symlinks.
+    Only applies normalization if the firmlink actually exists on the system.
+    """
+    # Check /var firmlink
+    if (path.startswith("/var/") or path == "/var") and os.path.exists("/private/var"):
+        # Only normalize if /var actually resolves to /private/var on this system
+        if os.path.realpath("/var") == "/private/var":
+            return ("/private" + path) if path.startswith("/var/") else "/private/var"
+    
+    # Check /tmp firmlink  
+    if (path.startswith("/tmp/") or path == "/tmp") and os.path.exists("/private/tmp"):
+        # Only normalize if /tmp actually resolves to /private/tmp on this system
+        if os.path.realpath("/tmp") == "/private/tmp":
+            return ("/private" + path) if path.startswith("/tmp/") else "/private/tmp"
+    
+    return path
+
+
 def allowlist_path() -> Path:
     return PRODUCT_ROOT / "users" / str(os.getuid()) / "config" / "allowed_chats.txt"
 
@@ -64,6 +86,17 @@ def install_entries(path: Path, entries: list[str]) -> None:
     if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
     
+    # Reject if PRODUCT_ROOT itself is a symlink
+    if PRODUCT_ROOT.exists() and PRODUCT_ROOT.is_symlink():
+        raise RuntimeError("PRODUCT_ROOT must not be a symlink")
+    
+    # Compute unresolved absolute expected paths with firmlink-only normalization.
+    # Uses abspath (not realpath) to avoid following user symlinks in PRODUCT_ROOT,
+    # then normalizes only OS-managed firmlinks (/var ↔ /private/var, /tmp ↔ /private/tmp).
+    # This catches attacks where PRODUCT_ROOT or subdirs are symlinked.
+    expected_abs = _normalize_macos_firmlinks(os.path.abspath(str(expected_path)))
+    expected_parent_abs = _normalize_macos_firmlinks(os.path.abspath(str(expected_path.parent)))
+    
     # Pre-install symlink check: reject if path exists and is a symlink
     if path.exists():
         if path.is_symlink():
@@ -72,9 +105,28 @@ def install_entries(path: Path, entries: list[str]) -> None:
         if os.path.abspath(str(path)) != os.path.realpath(str(path)):
             raise RuntimeError("allowlist path must not be a symlink")
     else:
-        # Path doesn't exist yet - verify parent is what we expect
-        parent_canonical = path.parent.resolve(strict=False)
-        if parent_canonical != expected_path.parent.resolve(strict=False):
+        # Path doesn't exist yet - verify parent is what we expect.
+        # Use O_NOFOLLOW + O_CLOEXEC to validate parent components securely.
+        try:
+            parent_fd = os.open(
+                str(path.parent),
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            )
+            try:
+                parent_stat = os.fstat(parent_fd)
+                if not stat.S_ISDIR(parent_stat.st_mode):
+                    raise RuntimeError("allowlist parent is not a directory")
+            finally:
+                os.close(parent_fd)
+        except OSError as exc:
+            raise RuntimeError(f"allowlist parent validation failed: {exc}")
+        
+        # Compare resolved actual parent against firmlink-normalized expected parent.
+        # Security: expected_parent_abs is computed from the PRODUCT_ROOT constant with
+        # only firmlink normalization (realpath on the unresolved abspath). If PRODUCT_ROOT
+        # or its subdirs are symlinked, the resolved actual won't match the expected structure.
+        parent_canonical = os.path.realpath(str(path.parent))
+        if parent_canonical != expected_parent_abs:
             raise RuntimeError("allowlist parent directory mismatch")
     
     # Create temp file in a user-owned private directory to avoid replacement race.
@@ -123,8 +175,10 @@ def install_entries(path: Path, entries: list[str]) -> None:
                 raise RuntimeError("installed allowlist is not a regular file")
             if os.path.abspath(str(path)) != os.path.realpath(str(path)):
                 raise RuntimeError("installed allowlist is a symlink")
-            post_install_canonical = path.resolve(strict=True)
-            if post_install_canonical != expected_path.resolve(strict=False):
+            # Compare resolved actual path against firmlink-normalized expected path.
+            # Security maintained: expected_abs is from PRODUCT_ROOT constant + firmlink normalize.
+            post_install_canonical = os.path.realpath(str(path.resolve(strict=True)))
+            if post_install_canonical != expected_abs:
                 raise RuntimeError("allowlist was not created at expected location")
         except OSError as e:
             raise RuntimeError(f"allowlist verification failed: {e}")
