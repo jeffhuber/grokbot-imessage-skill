@@ -64,6 +64,13 @@ def install_entries(path: Path, entries: list[str]) -> None:
     if path != expected_path:
         raise RuntimeError("refusing an unexpected policy destination")
     
+    # Verify PRODUCT_ROOT itself hasn't been symlinked to an unexpected location.
+    # Compare lexical absolute path against resolved path.
+    product_root_abs = os.path.abspath(str(PRODUCT_ROOT))
+    product_root_real = os.path.realpath(str(PRODUCT_ROOT))
+    if product_root_abs != product_root_real:
+        raise RuntimeError("PRODUCT_ROOT path contains symlinks")
+    
     # Compute unresolved absolute expected paths for comparison
     expected_abs = Path(os.path.abspath(str(expected_path)))
     expected_parent_abs = Path(os.path.abspath(str(expected_path.parent)))
@@ -92,9 +99,26 @@ def install_entries(path: Path, entries: list[str]) -> None:
         except OSError as exc:
             raise RuntimeError(f"allowlist parent validation failed: {exc}")
         
-        # Compare resolved parent against unresolved absolute expected parent
-        parent_canonical = path.parent.resolve(strict=False)
-        if parent_canonical != expected_parent_abs:
+        # Verify parent location matches expectations. Use realpath on both sides to handle
+        # system symlinks (like /tmp -> /private/tmp), but maintain security by checking
+        # the resolved actual parent against the resolved expected parent starting from
+        # the *lexical* PRODUCT_ROOT (which is a constant in production).
+        # This catches symlinks in PRODUCT_ROOT or its subdirectories by ensuring the
+        # resolved paths match the expected structure based on the code's PRODUCT_ROOT constant.
+        parent_canonical = os.path.realpath(str(path.parent))
+        expected_parent_real = os.path.realpath(str(expected_parent_abs))
+        
+        # Additional check: verify PRODUCT_ROOT component structure hasn't been redirected.
+        # Compare resolved PRODUCT_ROOT between actual and expected paths.
+        product_root_real = os.path.realpath(str(PRODUCT_ROOT))
+        # The actual parent should start with the expected PRODUCT_ROOT when resolved
+        try:
+            rel_from_root = Path(parent_canonical).relative_to(product_root_real)
+            expected_rel = Path("users") / str(os.getuid()) / "config"
+            if rel_from_root != expected_rel:
+                raise RuntimeError("allowlist parent directory mismatch")
+        except ValueError:
+            # parent_canonical is not under product_root_real
             raise RuntimeError("allowlist parent directory mismatch")
     
     # Create temp file in a user-owned private directory to avoid replacement race.
@@ -143,9 +167,10 @@ def install_entries(path: Path, entries: list[str]) -> None:
                 raise RuntimeError("installed allowlist is not a regular file")
             if os.path.abspath(str(path)) != os.path.realpath(str(path)):
                 raise RuntimeError("installed allowlist is a symlink")
-            # Compare resolved path against unresolved absolute expected path
+            # Compare resolved path against expected realpath (handles system symlinks)
             post_install_canonical = path.resolve(strict=True)
-            if post_install_canonical != expected_abs:
+            expected_real = os.path.realpath(str(expected_abs))
+            if str(post_install_canonical) != expected_real:
                 raise RuntimeError("allowlist was not created at expected location")
         except OSError as e:
             raise RuntimeError(f"allowlist verification failed: {e}")

@@ -614,8 +614,12 @@ class HardenedInstallerTests(unittest.TestCase):
                         mock_run.return_value = mock.Mock(returncode=0)
                         configure_allowlist.install_entries(symlink_allowlist, ["+14155551234"])
             
-            # Verify it was rejected due to parent path mismatch
-            self.assertIn("parent", str(ctx.exception).lower())
+            # Verify it was rejected due to symlinked path (parent or PRODUCT_ROOT)
+            error_msg = str(ctx.exception).lower()
+            self.assertTrue(
+                "parent" in error_msg or "product_root" in error_msg or "symlink" in error_msg,
+                f"Expected path validation error, got: {ctx.exception}"
+            )
     
     def test_allowlist_install_rejects_symlink_in_expected_path(self) -> None:
         """Post-install validation must detect when file is created via symlinked path."""
